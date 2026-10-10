@@ -27,6 +27,25 @@ The production build is static. Run the Fastify adapter separately with `npm run
 
 For constrained environments, set `ONEIMAGE_SERVER_BUILD_DIR` to a writable directory before `npm run server:build`; otherwise the build uses the system temporary directory and produces `index.cjs`.
 
+## Provenance gateway subproject
+
+`providers/content-provenance-gateway/` is a git submodule pointing at
+[dengyie/content-provenance](https://github.com/dengyie/content-provenance): a
+small, publicly deployable Node service that exposes OpenAI's
+`POST /v1/content_provenance_checks` as an **anonymous** endpoint (the upstream
+key stays server-side, with per-IP rate limiting, a daily cost cap, a concurrency
+limit, and a body-size cap).
+
+It is included as a self-contained reference for the provenance data source and is
+deployed independently; OneImage does not depend on it at runtime. Clone with
+submodules to get it:
+
+```bash
+git clone --recurse-submodules https://github.com/dengyie/oneimage.git
+# or, in an existing checkout:
+git submodule update --init --recursive
+```
+
 ## Layout
 
 ```text
@@ -35,4 +54,5 @@ src/application/     file policy and use-case orchestration
 src/infrastructure/  browser image processing and provider adapters
 src/App.tsx          presentation layer
 tests/               Vitest behavior tests
+providers/           submodules (e.g. content-provenance-gateway)
 ```

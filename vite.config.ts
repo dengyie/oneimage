@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,5 +21,6 @@ export default defineConfig({
     environment: 'jsdom',
     restoreMocks: true,
     clearMocks: true,
+    exclude: [...configDefaults.exclude, 'providers/**'],
   },
 })
