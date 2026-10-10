@@ -1,0 +1,38 @@
+# OneImage
+
+OneImage is a local-first image workbench. P0 tools run in the browser and do not upload the source image. Remote AI and provenance providers are isolated behind server-side adapters so browser code never receives provider secrets.
+
+## Current implementation
+
+- Browser tools: format conversion, compression, resize, visible watermark, metadata-clean export; processing prefers a module Worker with an OffscreenCanvas path and keeps a browser fallback.
+- Domain contracts: `ToolRegistry` and deterministic local job state machine.
+- Provider boundary: `OpenAIProvenanceAdapter` maps C2PA and SynthID evidence independently.
+- Server boundary: `POST /api/v1/provenance/openai` accepts one bounded multipart image, streams it through a private temporary file, and keeps `OPENAI_API_KEY` server-side.
+- Operations boundary: `GET /healthz` returns `200` when the provider is configured and `503` degraded status otherwise, without exposing secrets. It checks configuration, not upstream connectivity.
+- UI: responsive workbench with local preview, drag-and-drop input, cancellation, export, and privacy status.
+
+OCR, segmentation, upscaling, invisible watermark operations, and remote inpainting remain gated behind the validation probes in the project development document. They are not represented as silently working features.
+
+## Run
+
+```powershell
+npm install
+npm test
+npm run build
+npm run server
+npm run dev
+```
+
+The production build is static. Run the Fastify adapter separately with `npm run server`; it bundles a CommonJS Node entrypoint before starting, defaults to `127.0.0.1:8787`, and reads `OPENAI_API_KEY` server-side. Vite proxies `/api` to that local server during development. Configure `NODE_ENV=development` explicitly to allow the no-token same-origin development proxy. Production and unset environments require `ONEIMAGE_SERVER_TOKEN` or an equivalent authenticated reverse-proxy session. Do not import the adapter into browser UI code or expose that key to the client.
+
+For constrained environments, set `ONEIMAGE_SERVER_BUILD_DIR` to a writable directory before `npm run server:build`; otherwise the build uses the system temporary directory and produces `index.cjs`.
+
+## Layout
+
+```text
+src/domain/          pure contracts and state transitions
+src/application/     file policy and use-case orchestration
+src/infrastructure/  browser image processing and provider adapters
+src/App.tsx          presentation layer
+tests/               Vitest behavior tests
+```
