@@ -12,6 +12,24 @@ capabilities_url="http://127.0.0.1:8877/api/v1/capabilities"
 sha=''
 archive=''
 checksum=''
+
+# GitHub Actions uses a forced-command SSH key. In that mode sshd does not
+# pass argv; it exposes the requested command through SSH_ORIGINAL_COMMAND.
+if [ "$#" -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  read -r -a original_args <<< "$SSH_ORIGINAL_COMMAND"
+  if [ "${#original_args[@]}" -ne 7 ] || [ "${original_args[0]}" != "/usr/local/sbin/oneimage-deploy" ]; then
+    echo "invalid forced command" >&2
+    exit 2
+  fi
+  original_args[2]=${original_args[2]#\'}
+  original_args[2]=${original_args[2]%\'}
+  original_args[4]=${original_args[4]#\'}
+  original_args[4]=${original_args[4]%\'}
+  original_args[6]=${original_args[6]#\'}
+  original_args[6]=${original_args[6]%\'}
+  set -- "${original_args[@]:1}"
+fi
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --sha) sha=${2:?missing --sha value}; shift 2 ;;
