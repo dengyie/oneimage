@@ -27,7 +27,7 @@ The production build is static. Run the Fastify adapter separately with `npm run
 
 For constrained environments, set `ONEIMAGE_SERVER_BUILD_DIR` to a writable directory before `npm run server:build`; otherwise the build uses the system temporary directory and produces `index.cjs`.
 
-The production Nginx example under `deploy/` listens on loopback port `3302`, proxies `/api/` to Fastify on `8877`, and serves the static build for `image.mangoqwq.com`. Its token include is host-only, mode `0600`, and never part of a release archive. GitHub Actions expects `PXED_DEPLOY_KEY`, `PXED_KNOWN_HOSTS`, and `PXED_DEPLOY_HOST` in the `production` environment; the deploy key must be restricted to the fixed receiver command. Keep the Cloudflare Tunnel catch-all ingress last when adding this hostname.
+The production Nginx example under `deploy/` listens on loopback port `3302`, proxies `/api/` to Fastify on `8877`, and serves the static build for `image.mangoqwq.com`. Its token include is host-only at `/personal/pxed/nginx/oneimage-secret.conf` (outside the globally included `conf.d` directory), mode `0600`, and never part of a release archive. GitHub Actions expects `PXED_DEPLOY_KEY`, `PXED_KNOWN_HOSTS`, and `PXED_DEPLOY_HOST` in the `production` environment; the deploy key must be restricted to the fixed receiver command. Keep the Cloudflare Tunnel catch-all ingress last when adding this hostname.
 
 ## Provenance gateway subproject
 

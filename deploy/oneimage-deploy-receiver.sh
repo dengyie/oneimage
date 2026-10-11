@@ -68,6 +68,8 @@ test -s "$stage/index.cjs"
 test -s "$stage/package.json"
 test -s "$stage/package-lock.json"
 chmod +x "$stage/run.sh"
+chmod 0711 "$root" "$release_root" "$incoming" "$stage" "$stage/dist" "$stage/dist/assets"
+find "$stage/dist" -type f -exec chmod 0644 {} +
 cd "$stage"
 npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 cd - >/dev/null
