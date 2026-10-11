@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: oneimage-production
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -15,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -30,3 +36,98 @@ jobs:
         run: npm run build
       - name: Build server
         run: npm run server:build
+
+      - name: Install provenance gateway dependencies
+        run: npm ci --prefix providers/content-provenance-gateway --ignore-scripts
+
+      - name: Test provenance gateway subproject
+        run: npm --prefix providers/content-provenance-gateway test
+
+      - name: Audit provenance gateway runtime dependencies
+        run: npm --prefix providers/content-provenance-gateway audit --omit=dev --audit-level=high
+
+  package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build frontend
+        run: npm run build
+      - name: Build server
+        env:
+          ONEIMAGE_SERVER_BUILD_DIR: server-build
+        run: npm run server:build
+      - name: Create release archive
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -s server-build/index.cjs
+          mkdir -p release
+          cp -R dist release/dist
+          cp server-build/index.cjs server-build/index.cjs.map release/
+          cp package.json package-lock.json release/
+          cp deploy/oneimage-run.sh release/run.sh
+          chmod +x release/run.sh
+          printf '%s\n' "$RELEASE_SHA" > release/REVISION
+          tar -C release -czf "oneimage-${RELEASE_SHA}.tar.gz" .
+          sha256sum "oneimage-${RELEASE_SHA}.tar.gz" > "oneimage-${RELEASE_SHA}.tar.gz.sha256"
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oneimage-release-${{ github.sha }}
+          path: |
+            oneimage-${{ github.sha }}.tar.gz
+            oneimage-${{ github.sha }}.tar.gz.sha256
+          if-no-files-found: error
+
+  deploy-pxed:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oneimage-release-${{ github.sha }}
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.PXED_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PXED_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/oneimage_deploy"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/oneimage_deploy" "$HOME/.ssh/known_hosts"
+      - name: Upload release to pxed receiver
+        env:
+          DEPLOY_HOST: ${{ vars.PXED_DEPLOY_HOST }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          archive="oneimage-${RELEASE_SHA}.tar.gz"
+          checksum="oneimage-${RELEASE_SHA}.tar.gz.sha256"
+          scp -i "$HOME/.ssh/oneimage_deploy" "$archive" "$checksum" "${DEPLOY_HOST}:/tmp/"
+          ssh -i "$HOME/.ssh/oneimage_deploy" "$DEPLOY_HOST" "/usr/local/sbin/oneimage-deploy --sha '$RELEASE_SHA' --archive '/tmp/$archive' --checksum '/tmp/$checksum'"

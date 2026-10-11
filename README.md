@@ -23,9 +23,11 @@ npm run server
 npm run dev
 ```
 
-The production build is static. Run the Fastify adapter separately with `npm run server`; it bundles a CommonJS Node entrypoint before starting, defaults to `127.0.0.1:8787`, and reads `OPENAI_API_KEY` server-side. Vite proxies `/api` to that local server during development. Configure `NODE_ENV=development` explicitly to allow the no-token same-origin development proxy. Production and unset environments require `ONEIMAGE_SERVER_TOKEN` or an equivalent authenticated reverse-proxy session. Do not import the adapter into browser UI code or expose that key to the client.
+The production build is static. Run the Fastify adapter separately with `npm run server`; it bundles a CommonJS Node entrypoint before starting, defaults to `127.0.0.1:8787` locally, and reads `OPENAI_API_KEY` server-side. The pxed deployment sets `PORT=8877` in its private `.env`. Vite proxies `/api` to that local server during development. Configure `NODE_ENV=development` explicitly to allow the no-token same-origin development proxy. Production and unset environments require `ONEIMAGE_SERVER_TOKEN` or an equivalent authenticated reverse-proxy session. Do not import the adapter into browser UI code or expose that key to the client.
 
 For constrained environments, set `ONEIMAGE_SERVER_BUILD_DIR` to a writable directory before `npm run server:build`; otherwise the build uses the system temporary directory and produces `index.cjs`.
+
+The production Nginx example under `deploy/` listens on loopback port `3302`, proxies `/api/` to Fastify on `8877`, and serves the static build for `image.mangoqwq.com`. Its token include is host-only, mode `0600`, and never part of a release archive. GitHub Actions expects `PXED_DEPLOY_KEY`, `PXED_KNOWN_HOSTS`, and `PXED_DEPLOY_HOST` in the `production` environment; the deploy key must be restricted to the fixed receiver command. Keep the Cloudflare Tunnel catch-all ingress last when adding this hostname.
 
 ## Provenance gateway subproject
 
