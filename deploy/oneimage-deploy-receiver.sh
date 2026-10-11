@@ -44,7 +44,7 @@ esac
 test "${#sha}" -eq 40
 case "$archive" in /tmp/oneimage-*.tar.gz) ;; *) echo "archive must be a CI /tmp release" >&2; exit 2 ;; esac
 case "$checksum" in /tmp/oneimage-*.tar.gz.sha256) ;; *) echo "checksum must be a CI /tmp release" >&2; exit 2 ;; esac
-test "$(basename "$archive" .tar.gz).sha256" = "$(basename "$checksum")"
+test "$(basename "$archive").sha256" = "$(basename "$checksum")"
 test -f "$archive"
 test -f "$checksum"
 grep -F "  $(basename "$archive")" "$checksum" >/dev/null
