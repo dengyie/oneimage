@@ -16,14 +16,23 @@ checksum=''
 # GitHub Actions uses a forced-command SSH key. In that mode sshd does not
 # pass argv; it exposes the requested command through SSH_ORIGINAL_COMMAND.
 if [ "$#" -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
-  # scp uses a separate remote command for each release file. Keep the key
-  # restricted while allowing only the two CI upload targets under /tmp.
+  # Accept only the two CI release streams. The forced key cannot open a
+  # shell, SFTP subsystem, arbitrary path, or arbitrary command.
   case "$SSH_ORIGINAL_COMMAND" in
-    "scp -t /tmp/oneimage-"*.tar.gz|"scp -t /tmp/oneimage-"*.tar.gz.sha256)
-      upload_path=${SSH_ORIGINAL_COMMAND#scp -t }
-      case "$upload_path" in
-        /tmp/oneimage-*.tar.gz|/tmp/oneimage-*.tar.gz.sha256) exec /usr/bin/scp -t "$upload_path" ;;
+    upload\ *\ archive|upload\ *\ checksum)
+      read -r action upload_sha upload_kind extra <<< "$SSH_ORIGINAL_COMMAND"
+      case "$upload_sha" in ''|*[!0-9a-f]*) echo "invalid upload sha" >&2; exit 2 ;; esac
+      test "${#upload_sha}" -eq 40
+      test -z "${extra:-}"
+      case "$upload_kind" in
+        archive) upload_path="/tmp/oneimage-${upload_sha}.tar.gz" ;;
+        checksum) upload_path="/tmp/oneimage-${upload_sha}.tar.gz.sha256" ;;
+        *) echo "invalid upload kind" >&2; exit 2 ;;
       esac
+      umask 077
+      cat > "$upload_path"
+      test -s "$upload_path"
+      exit 0
       ;;
   esac
   read -r -a original_args <<< "$SSH_ORIGINAL_COMMAND"

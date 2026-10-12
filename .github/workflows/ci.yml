@@ -130,5 +130,6 @@ jobs:
           test -n "$DEPLOY_HOST"
           archive="oneimage-${RELEASE_SHA}.tar.gz"
           checksum="oneimage-${RELEASE_SHA}.tar.gz.sha256"
-          scp -i "$HOME/.ssh/oneimage_deploy" "$archive" "$checksum" "${DEPLOY_HOST}:/tmp/"
+          ssh -i "$HOME/.ssh/oneimage_deploy" "$DEPLOY_HOST" "upload $RELEASE_SHA archive" < "$archive"
+          ssh -i "$HOME/.ssh/oneimage_deploy" "$DEPLOY_HOST" "upload $RELEASE_SHA checksum" < "$checksum"
           ssh -i "$HOME/.ssh/oneimage_deploy" "$DEPLOY_HOST" "/usr/local/sbin/oneimage-deploy --sha '$RELEASE_SHA' --archive '/tmp/$archive' --checksum '/tmp/$checksum'"
