@@ -88,7 +88,7 @@ jobs:
           tar -C release -czf "oneimage-${RELEASE_SHA}.tar.gz" .
           sha256sum "oneimage-${RELEASE_SHA}.tar.gz" > "oneimage-${RELEASE_SHA}.tar.gz.sha256"
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: oneimage-release-${{ github.sha }}
           path: |
@@ -106,7 +106,7 @@ jobs:
       contents: read
     steps:
       - name: Download release artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: oneimage-release-${{ github.sha }}
       - name: Configure SSH
