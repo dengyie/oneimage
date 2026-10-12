@@ -16,6 +16,16 @@ checksum=''
 # GitHub Actions uses a forced-command SSH key. In that mode sshd does not
 # pass argv; it exposes the requested command through SSH_ORIGINAL_COMMAND.
 if [ "$#" -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  # scp uses a separate remote command for each release file. Keep the key
+  # restricted while allowing only the two CI upload targets under /tmp.
+  case "$SSH_ORIGINAL_COMMAND" in
+    "scp -t /tmp/oneimage-"*.tar.gz|"scp -t /tmp/oneimage-"*.tar.gz.sha256)
+      upload_path=${SSH_ORIGINAL_COMMAND#scp -t }
+      case "$upload_path" in
+        /tmp/oneimage-*.tar.gz|/tmp/oneimage-*.tar.gz.sha256) exec /usr/bin/scp -t "$upload_path" ;;
+      esac
+      ;;
+  esac
   read -r -a original_args <<< "$SSH_ORIGINAL_COMMAND"
   if [ "${#original_args[@]}" -ne 7 ] || [ "${original_args[0]}" != "/usr/local/sbin/oneimage-deploy" ]; then
     echo "invalid forced command" >&2
