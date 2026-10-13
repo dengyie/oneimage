@@ -29,23 +29,20 @@ For constrained environments, set `ONEIMAGE_SERVER_BUILD_DIR` to a writable dire
 
 The production Nginx example under `deploy/` listens on loopback port `3302`, proxies `/api/` to Fastify on `8877`, and serves the static build for `image.mangoqwq.com`. Its token include is host-only at `/personal/pxed/nginx/oneimage-secret.conf` (outside the globally included `conf.d` directory), mode `0600`, and never part of a release archive. GitHub Actions expects `PXED_DEPLOY_KEY`, `PXED_KNOWN_HOSTS`, and `PXED_DEPLOY_HOST` in the `production` environment; the deploy key must be restricted to the fixed receiver command. Keep the Cloudflare Tunnel catch-all ingress last when adding this hostname.
 
-## Provenance gateway subproject
+## Provenance gateway package
 
-`providers/content-provenance-gateway/` is a git submodule pointing at
-[dengyie/content-provenance](https://github.com/dengyie/content-provenance): a
-small, publicly deployable Node service that exposes OpenAI's
+`providers/content-provenance-gateway/` is a self-contained package in this
+monorepo: a small, separately deployable Node service that exposes OpenAI's
 `POST /v1/content_provenance_checks` as an **anonymous** endpoint (the upstream
 key stays server-side, with per-IP rate limiting, a daily cost cap, a concurrency
 limit, and a body-size cap).
 
 It is included as a self-contained reference for the provenance data source and is
-deployed independently; OneImage does not depend on it at runtime. Clone with
-submodules to get it:
+deployed independently; OneImage does not depend on it at runtime. A normal clone
+contains the package:
 
 ```bash
-git clone --recurse-submodules https://github.com/dengyie/oneimage.git
-# or, in an existing checkout:
-git submodule update --init --recursive
+git clone https://github.com/dengyie/oneimage.git
 ```
 
 ## Layout
@@ -56,5 +53,5 @@ src/application/     file policy and use-case orchestration
 src/infrastructure/  browser image processing and provider adapters
 src/App.tsx          presentation layer
 tests/               Vitest behavior tests
-providers/           submodules (e.g. content-provenance-gateway)
+providers/           independently deployable provider packages
 ```

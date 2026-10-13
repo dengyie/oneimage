@@ -1,3 +1,0 @@
-[submodule "providers/content-provenance-gateway"]
-	path = providers/content-provenance-gateway
-	url = https://github.com/dengyie/content-provenance.git

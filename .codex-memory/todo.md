@@ -20,4 +20,5 @@
 - [x] Replace SFTP/scp deployment upload with restricted SHA-scoped stdin streams.
 - [x] Deploy `d7ca720` to pxed and verify health, capabilities, and public provenance PNG response.
 - [x] Repin content-provenance submodule to v3 `f6b4a23`.
+- [x] Convert content-provenance from submodule to a normal package in the OneImage monorepo.
 - [x] Upgrade CI actions to Node 24 runtime.

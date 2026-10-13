@@ -37,5 +37,5 @@ Select and contract-test the first AI image generation provider with explicit co
 
 - Production: `https://image.mangoqwq.com`
 - Server: `/personal/pxed/oneimage`, Supervisor program `oneimage`
-- Gateway submodule: `providers/content-provenance-gateway/` at `f6b4a23`
+- Gateway package: `providers/content-provenance-gateway/` at v3 baseline `f6b4a23`
 - Canonical docs: `01.项目/OneImage/OneImage 文档索引.md`, `01.项目/OneImage/OneImage 开发文档.md`

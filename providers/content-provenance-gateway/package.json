@@ -1,0 +1,35 @@
+{
+  "name": "content-provenance",
+  "version": "1.0.0",
+  "description": "Anonymous, key-free HTTP wrapper around OpenAI POST /v1/content_provenance_checks",
+  "type": "module",
+  "main": "server.mjs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dengyie/oneimage.git",
+    "directory": "providers/content-provenance-gateway"
+  },
+  "homepage": "https://github.com/dengyie/oneimage/tree/main/providers/content-provenance-gateway",
+  "bugs": {
+    "url": "https://github.com/dengyie/oneimage/issues"
+  },
+  "keywords": [
+    "c2pa",
+    "synthid",
+    "content-provenance",
+    "openai",
+    "watermark-detection",
+    "reverse-proxy"
+  ],
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/server.test.mjs"
+  },
+  "dependencies": {
+    "undici": "^7.30.0"
+  }
+}
