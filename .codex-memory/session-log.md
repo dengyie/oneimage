@@ -13,3 +13,10 @@
 - Results: OneImage tests 34/34, gateway tests 25/25, TypeScript, frontend build, server build, clean package install, and diff checks passed.
 - Next: Commit and push the monorepo conversion; let the normal CI deploy the unchanged runtime artifact.
 - Blockers: The legacy public `dengyie/content-provenance` repository is intentionally not deleted because deletion is irreversible; it is no longer the main source of truth.
+
+## 2026-10-14 06:35
+- Task: Close the old standalone gateway repository after the monorepo merge.
+- Actions: Archived `dengyie/content-provenance` through GitHub API without deleting it; marked the old repository as historical in canonical docs.
+- Results: OneImage main repository is the only active source of truth; the old repository remains recoverable and traceable.
+- Next: No further deployment work for this milestone.
+- Blockers: None.
