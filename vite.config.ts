@@ -18,7 +18,10 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'jsdom',
+    // Nothing under test needs the DOM: the suites exercise pure domain logic,
+    // Node-side Fastify routes, and adapters over Node's global File/Blob/fetch.
+    // Booting jsdom per file accounted for ~93% of test runtime.
+    environment: 'node',
     restoreMocks: true,
     clearMocks: true,
     exclude: [...configDefaults.exclude, 'providers/**'],
