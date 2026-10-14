@@ -24,3 +24,19 @@
 - Rollback trigger: If the provenance provider starts accepting AVIF, add it back to the shared list in one place and extend the table-driven test.
 - Related files: `src/domain/image-input.ts`, `src/application/file-policy.ts`, `src/domain/tool-registry.ts`, `server/provenance-route.ts`, `server/index.ts`, `src/infrastructure/openai-provenance-adapter.ts`, `src/App.tsx`.
 
+## 2026-10-15 - Trust forwarded client addresses only from a loopback peer
+
+- Decision: `server/client-ip.ts` reads `cf-connecting-ip` then the first `X-Forwarded-For` hop as the rate-limit key, but only when the immediate socket peer is loopback; otherwise the peer's own socket address is used.
+- Rationale: Keying on `request.ip` alone collapsed every caller behind Nginx to `127.0.0.1`, sharing one 30/minute budget. Trusting forwarded headers unconditionally would let any client mint its own bucket. Loopback binding is the precondition that makes the header trustworthy, matching the bundled gateway's documented model.
+- Impact: A live check on the built server showed one forwarded client denied at request 31 (429) while 32 distinct forwarded clients all passed.
+- Rollback trigger: If the server is ever bound to a non-loopback interface, the forwarded-header trust assumption is void and `client-ip.ts` must change before that deploy.
+- Related files: `server/client-ip.ts`, `server/rate-limit.ts`, `server/index.ts`, `tests/client-ip.test.ts`, `tests/rate-limit.test.ts`.
+
+## 2026-10-15 - Delete maxPixels rather than implement it; read warningCodes from the registry
+
+- Decision: Remove `maxPixels` from `ToolDefinition` and its three declarations. Make `warningCodes` authoritative by adding `resolveToolWarnings`; the worker returns only the artifact and the caller attaches warnings.
+- Rationale: `maxPixels` was declared 40 MP on resize/crop/rotate with no reader, and a declared limit that nothing enforces is a guarantee the app does not make. `warningCodes` was duplicated as a hardcoded `toolId === 'compress'` ternary in two files.
+- Impact: Adding a warning is a registry edit. Keeping the registry out of the worker bundle avoided growing it from 2.33 kB to 4.22 kB.
+- Rollback trigger: If a CPU-plane path is added that must reject large images up front, reintroduce a pixel cap together with the enforcement, not as a declaration alone.
+- Related files: `src/domain/tool.ts`, `src/domain/tool-registry.ts`, `src/infrastructure/browser-image-processor.ts`, `src/infrastructure/image-worker.ts`, `tests/tool-registry.test.ts`.
+

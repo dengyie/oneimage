@@ -28,3 +28,9 @@
 - Next: Owner decisions on the rate-limiter IP source and the unused tool-contract fields; otherwise P1 AI provider selection.
 - Blockers: None.
 
+## 2026-10-15 04:30
+- Task: Close the two remaining review findings that are fixable inside the repository (rate-limiter key, tool contract), and refresh docs.
+- Actions: Added `server/client-ip.ts` (`resolveClientKey`) and `server/rate-limit.ts` (limiter with injectable clock); the limiter now keys on the real client address and only trusts `cf-connecting-ip` / `X-Forwarded-For` when the socket peer is loopback. Widened the `allow` port in `server/provenance-route.ts` so the route can pass headers and the raw socket. Added `resolveToolWarnings` and routed both processors through it; the worker now returns only the artifact so the registry stays out of the worker bundle. Removed `maxPixels` from the contract and its three declarations. Updated canonical Obsidian docs, MOCs, and the AI doc router; ran `scan-stale-docs`.
+- Results: tsc clean, 56 local tests pass (14 files), gateway 25/25, frontend and server builds pass. Live check against the built bundle: one forwarded client is denied at request 31 (429) while 32 distinct forwarded clients all pass. CI run `38632226498` verify/package/deploy-pxed all green; live `image.mangoqwq.com` `/healthz` 200 and AVIF still `400 invalid-input`. `scan-stale-docs --vault .` returned `RESULT=OK` (`stale_hits=0`).
+- Next: P1 AI provider selection; the self-contained-bundle / `node_modules` removal item still needs an owner decision because it spans the host receiver.
+- Blockers: None.
