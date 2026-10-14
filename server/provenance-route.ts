@@ -12,7 +12,7 @@ type ProvenanceCheck = (file: Blob, filename: string) => Promise<ProvenanceResul
 
 export interface ProvenanceRouteSecurity {
   authorize(request: { headers: Record<string, string | string[] | undefined> }): boolean | Promise<boolean>
-  allow(request: { ip?: string }): boolean | Promise<boolean>
+  allow(request: { ip?: string; headers: Record<string, string | string[] | undefined>; raw: { socket: { remoteAddress?: string } } }): boolean | Promise<boolean>
 }
 
 const ACCEPTED_MIME = new Set<string>(SUPPORTED_IMAGE_MIME)

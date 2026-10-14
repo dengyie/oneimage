@@ -7,6 +7,7 @@ import { registerCapabilitiesRoute } from './capabilities-route'
 import { authorizeProvenanceRequest } from './security'
 import { registerHealthRoute } from './health-route'
 import { configureOutboundProxy } from './proxy'
+import { createRateLimiter } from './rate-limit'
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
@@ -14,11 +15,7 @@ async function main(): Promise<void> {
   await app.register(multipart, { limits: { fileSize: maxInputBytes, files: 1, parts: 1 } })
   const serverToken = process.env.ONEIMAGE_SERVER_TOKEN ?? ''
   configureOutboundProxy(process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy)
-  const requestCounts = new Map<string, { count: number; resetAt: number }>()
-  const windowMs = 60_000
-  const maxRequestsPerWindow = 30
-  const maxTrackedClients = 10_000
-  let rateLimitWindow = Math.floor(Date.now() / windowMs)
+  const rateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 30, maxTrackedClients: 10_000 })
   const allowDevelopmentOrigin = process.env.NODE_ENV === 'development'
   registerHealthRoute(app, { providerConfigured: Boolean(process.env.OPENAI_API_KEY) })
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
@@ -27,24 +24,7 @@ async function main(): Promise<void> {
     (file, filename) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename),
     {
       authorize: (request) => authorizeProvenanceRequest(request.headers, serverToken, allowDevelopmentOrigin),
-      allow: (request) => {
-        const now = Date.now()
-        const currentWindow = Math.floor(now / windowMs)
-        if (rateLimitWindow !== currentWindow) {
-          requestCounts.clear()
-          rateLimitWindow = currentWindow
-        }
-        const key = request.ip ?? 'unknown'
-        const current = requestCounts.get(key)
-        if (!current || current.resetAt <= now) {
-          if (requestCounts.size >= maxTrackedClients) return false
-          requestCounts.set(key, { count: 1, resetAt: now + windowMs })
-          return true
-        }
-        if (current.count >= maxRequestsPerWindow) return false
-        current.count += 1
-        return true
-      },
+      allow: (request) => rateLimiter.allow(request),
     },
   )
 
