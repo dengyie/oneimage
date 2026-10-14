@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createToolRegistry } from '../src/domain/tool-registry'
+import { createToolRegistry, resolveToolWarnings } from '../src/domain/tool-registry'
 import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from '../src/domain/image-input'
 
 describe('tool registry', () => {
@@ -30,5 +30,11 @@ describe('tool registry', () => {
       expect(tool.acceptedMime).toEqual(SUPPORTED_IMAGE_MIME)
       expect(tool.maxInputBytes).toBe(MAX_INPUT_BYTES)
     }
+  })
+
+  it('derives result warnings from the registry instead of the caller', () => {
+    expect(resolveToolWarnings('compress')).toEqual(['lossy-output'])
+    expect(resolveToolWarnings('convert')).toEqual([])
+    expect(resolveToolWarnings('unknown-tool')).toEqual([])
   })
 })

@@ -1,4 +1,5 @@
 import type { ToolResult } from '../domain/tool'
+import { resolveToolWarnings } from '../domain/tool-registry'
 import { MIME_EXTENSIONS, drawWatermark, resolveGeometry, resolveOutputMime, stripExtension } from './image-ops'
 import type { ImageGeometry } from './image-ops'
 
@@ -48,7 +49,7 @@ async function runMainThreadImageTool(
   return {
     blob,
     filename: `${stripExtension(file.name)}.${extension}`,
-    warnings: toolId === 'compress' ? ['lossy-output'] : [],
+    warnings: resolveToolWarnings(toolId),
   }
 }
 
@@ -64,10 +65,10 @@ function runImageWorker(toolId: string, file: File, options: LocalToolOptions, s
       callback()
     }
     const onAbort = () => finish(() => reject(new DOMException('operation cancelled', 'AbortError')))
-    worker.onmessage = (event: MessageEvent<{ ok: true; result: ToolResult } | { ok: false; message: string }>) => {
-      if ('result' in event.data) {
-        const result = event.data.result
-        finish(() => resolve(result))
+    worker.onmessage = (event: MessageEvent<{ ok: true; blob: Blob; filename: string } | { ok: false; message: string }>) => {
+      if ('blob' in event.data) {
+        const { blob, filename } = event.data
+        finish(() => resolve({ blob, filename, warnings: resolveToolWarnings(toolId) }))
         return
       }
       const message = event.data.message
@@ -91,7 +92,6 @@ function applyRotation(context: CanvasRenderingContext2D, width: number, height:
   context.translate(width / 2, height / 2)
   context.rotate(rotation * Math.PI / 180)
 }
-
 
 function decodeImage(file: File, signal?: AbortSignal): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

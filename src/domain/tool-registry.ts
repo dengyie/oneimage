@@ -37,7 +37,6 @@ const definitions: readonly ToolDefinition[] = Object.freeze([
     requiresUpload: false,
     acceptedMime: ACCEPTED_IMAGE_MIME,
     maxInputBytes: MAX_INPUT_BYTES,
-    maxPixels: 40_000_000,
     confidenceModel: 'visual-quality',
     warningCodes: [],
   },
@@ -50,7 +49,6 @@ const definitions: readonly ToolDefinition[] = Object.freeze([
     requiresUpload: false,
     acceptedMime: ACCEPTED_IMAGE_MIME,
     maxInputBytes: MAX_INPUT_BYTES,
-    maxPixels: 40_000_000,
     confidenceModel: 'deterministic',
     warningCodes: [],
   },
@@ -63,7 +61,6 @@ const definitions: readonly ToolDefinition[] = Object.freeze([
     requiresUpload: false,
     acceptedMime: ACCEPTED_IMAGE_MIME,
     maxInputBytes: MAX_INPUT_BYTES,
-    maxPixels: 40_000_000,
     confidenceModel: 'deterministic',
     warningCodes: [],
   },
@@ -99,4 +96,13 @@ export function createToolRegistry(): ToolRegistry {
     get: (id) => byId.get(id),
     list: () => definitions,
   }
+}
+
+const registry = createToolRegistry()
+
+// Warnings are declared by the registry but attached to the result by the caller,
+// so the main-thread processor and the worker do not each hardcode which tools
+// warn. The worker bundle stays registry-free because of this.
+export function resolveToolWarnings(toolId: string): string[] {
+  return [...(registry.get(toolId)?.warningCodes ?? [])]
 }

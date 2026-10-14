@@ -19,7 +19,9 @@ self.onmessage = async (event: MessageEvent<{ toolId: string; file: File; option
     const mime = resolveOutputMime(toolId, file.type, options.outputMime)
     const blob = await canvas.convertToBlob({ type: mime, quality: Math.min(1, Math.max(0.1, options.quality ?? 0.88)) })
     const extension = MIME_EXTENSIONS[blob.type] ?? 'png'
-    self.postMessage({ ok: true, result: { blob, filename: `${stripExtension(file.name)}.${extension}`, warnings: toolId === 'compress' ? ['lossy-output'] : [] } })
+    // Warnings are the registry's concern, not the worker's; the caller attaches
+    // them so this bundle does not have to pull in the whole tool registry.
+    self.postMessage({ ok: true, blob, filename: `${stripExtension(file.name)}.${extension}` })
   } catch (error) {
     self.postMessage({ ok: false, message: error instanceof Error ? error.message : 'image worker failed' })
   }

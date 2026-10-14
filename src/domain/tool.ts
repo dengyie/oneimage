@@ -17,7 +17,6 @@ export interface ToolDefinition {
   requiresUpload: boolean
   acceptedMime: readonly string[]
   maxInputBytes: number
-  maxPixels?: number
   confidenceModel: ConfidenceModel
   warningCodes: readonly string[]
 }
