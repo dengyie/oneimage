@@ -35,6 +35,8 @@ jobs:
         run: npm run build
       - name: Build server
         run: npm run server:build
+      - name: Validate deployment scripts
+        run: bash -n deploy/oneimage-run.sh deploy/oneimage-deploy-receiver.sh
 
       - name: Install provenance gateway dependencies
         run: npm ci --prefix providers/content-provenance-gateway --ignore-scripts
