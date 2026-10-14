@@ -22,18 +22,21 @@ export interface RateLimiter {
 // cannot displace the clients already counting against the limit.
 export function createRateLimiter(policy: RateLimitPolicy, now: () => number = Date.now): RateLimiter {
   const counts = new Map<string, { count: number; resetAt: number }>()
-  let window = -1
   return {
     allow(request: RateLimitRequest): boolean {
       const current = now()
-      const currentWindow = Math.floor(current / policy.windowMs)
-      if (window !== currentWindow) {
-        counts.clear()
-        window = currentWindow
-      }
       const key = resolveClientKey(request.headers, request.raw.socket.remoteAddress)
-      const entry = counts.get(key)
+      let entry = counts.get(key)
+      if (entry && entry.resetAt <= current) {
+        counts.delete(key)
+        entry = undefined
+      }
       if (!entry || entry.resetAt <= current) {
+        if (counts.size >= policy.maxTrackedClients) {
+          for (const [trackedKey, trackedEntry] of counts) {
+            if (trackedEntry.resetAt <= current) counts.delete(trackedKey)
+          }
+        }
         if (counts.size >= policy.maxTrackedClients) return false
         counts.set(key, { count: 1, resetAt: current + policy.windowMs })
         return true

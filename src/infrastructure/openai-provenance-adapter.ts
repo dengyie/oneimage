@@ -72,10 +72,10 @@ export class OpenAIProvenanceAdapter {
         signal: controller.signal,
       })
     } catch (cause) {
-      if (cause instanceof DOMException && cause.name === 'AbortError') {
-        throw createProvenanceError('provider-timeout', true, 504, 'OpenAI provenance request timed out')
+      if (isAbortError(cause)) {
+        throw createProvenanceError('provider-timeout', true, 504, 'OpenAI provenance request timed out', cause)
       }
-      throw cause
+      throw createProvenanceError('provider-unavailable', true, 503, 'OpenAI provenance service is unavailable', cause)
     } finally {
       clearTimeout(timeout)
     }
@@ -100,6 +100,10 @@ export class OpenAIProvenanceAdapter {
   }
 }
 
+function isAbortError(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'name' in value && (value as { name?: unknown }).name === 'AbortError'
+}
+
 function isOpenAIResult(value: unknown): value is OpenAIResult {
   if (!value || typeof value !== 'object') return false
   const item = value as Record<string, unknown>
@@ -113,7 +117,7 @@ function isOpenAIResult(value: unknown): value is OpenAIResult {
 
 async function normalizeProviderError(response: Response): Promise<ProvenanceError> {
   const status = response.status
-  const code = status === 400 ? 'invalid-input' : status === 404 ? 'provider-auth' : status === 429 ? 'provider-rate-limit' : status >= 500 ? 'provider-unavailable' : 'provider-error'
+  const code = status === 400 ? 'invalid-input' : status === 401 || status === 403 || status === 404 ? 'provider-auth' : status === 429 ? 'provider-rate-limit' : status >= 500 ? 'provider-unavailable' : 'provider-error'
   const retryable = code === 'provider-rate-limit' || code === 'provider-unavailable'
   const fallbackMessage = `OpenAI provenance request failed with HTTP ${status}`
   const rawBody = await response.text()
@@ -129,8 +133,8 @@ async function normalizeProviderError(response: Response): Promise<ProvenanceErr
   return createProvenanceError(code, retryable, status, message)
 }
 
-function createProvenanceError(code: ProvenanceError['code'], retryable: boolean, status: number, message: string): ProvenanceError {
-  const error = new Error(message) as ProvenanceError
+function createProvenanceError(code: ProvenanceError['code'], retryable: boolean, status: number, message: string, cause?: unknown): ProvenanceError {
+  const error = new Error(message, cause === undefined ? undefined : { cause }) as ProvenanceError
   error.name = 'ProvenanceError'
   error.code = code
   error.retryable = retryable

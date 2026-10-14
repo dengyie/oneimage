@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkProvenance } from '../src/infrastructure/provenance-client'
+import { checkProvenance, getPublicCapabilities, isProvenanceMimeSupported } from '../src/infrastructure/provenance-client'
 
 describe('browser provenance client', () => {
   it('posts the selected image to the same-origin route and preserves evidence', async () => {
@@ -19,5 +19,26 @@ describe('browser provenance client', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'unauthorized', retryable: false, message: 'server authentication required' } }), { status: 401 }))
 
     await expect(checkProvenance(new File(['image'], 'sample.png', { type: 'image/png' }), fetcher)).rejects.toMatchObject({ code: 'unauthorized', retryable: false })
+  })
+
+  it('preserves non-retryable provider-auth errors from the server contract', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'provider-auth', retryable: false, message: 'provider rejected credentials' } }), { status: 502 }))
+
+    await expect(checkProvenance(new File(['image'], 'sample.png', { type: 'image/png' }), fetcher)).rejects.toMatchObject({ code: 'provider-auth', retryable: false, status: 502 })
+  })
+
+  it('loads public provider capabilities and validates provenance input formats', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ provenance: { enabled: true, provider: 'openai', maxInputBytes: 25 * 1024 * 1024 } }), { status: 200 }))
+
+    await expect(getPublicCapabilities(fetcher)).resolves.toEqual({ provenance: { enabled: true, provider: 'openai', maxInputBytes: 25 * 1024 * 1024 } })
+    expect(isProvenanceMimeSupported('image/png')).toBe(true)
+    expect(isProvenanceMimeSupported('image/avif')).toBe(false)
+  })
+
+  it('rejects a format outside the shared provenance policy before network access', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+
+    await expect(checkProvenance(new File(['image'], 'sample.avif', { type: 'image/avif' }), fetcher)).rejects.toMatchObject({ code: 'invalid-input', status: 400 })
+    expect(fetcher).not.toHaveBeenCalled()
   })
 })

@@ -33,6 +33,17 @@ describe('per-client rate limiter', () => {
     expect(limiter.allow(peer)).toBe(true)
   })
 
+  it('does not reset an active client bucket at a wall-clock boundary', () => {
+    let clock = 900
+    const limiter = createRateLimiter({ windowMs: 1_000, maxRequestsPerWindow: 2, maxTrackedClients: 10 }, () => clock)
+    const peer = request('127.0.0.1', '203.0.113.9')
+
+    expect(limiter.allow(peer)).toBe(true)
+    clock = 1_100
+    expect(limiter.allow(peer)).toBe(true)
+    expect(limiter.allow(peer)).toBe(false)
+  })
+
   it('denies a new client once the tracked-client cap is reached', () => {
     const limiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 5, maxTrackedClients: 2 })
     expect(limiter.allow(request('127.0.0.1', '203.0.113.1'))).toBe(true)

@@ -36,6 +36,30 @@ describe('OpenAI provenance adapter', () => {
     })
   })
 
+  it.each([401, 403])('maps HTTP %s to a non-retryable provider-auth error', async (status) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'access denied' } }), { status }))
+    const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher })
+
+    await expect(adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png')).rejects.toMatchObject({ code: 'provider-auth', retryable: false, status })
+  })
+
+  it('maps transport failures to a retryable provider-unavailable error and preserves the cause', async () => {
+    const cause = new TypeError('fetch failed')
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(cause)
+    const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher })
+
+    await expect(adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png')).rejects.toMatchObject({ code: 'provider-unavailable', retryable: true, status: 503, cause })
+  })
+
+  it('maps an abort-shaped exception to a retryable timeout error across runtimes', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject({ name: 'AbortError', message: 'timed out' }), { once: true })
+    }))
+    const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher, timeoutMs: 5 })
+
+    await expect(adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png')).rejects.toMatchObject({ code: 'provider-timeout', retryable: true, status: 504 })
+  })
+
   it('rejects unsupported local input before making a provider request', async () => {
     const fetcher = vi.fn<typeof fetch>()
     const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher })

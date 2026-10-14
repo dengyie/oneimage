@@ -3,7 +3,7 @@ import { validateImageFile } from './application/file-policy'
 import { runLocalTool } from './application/local-tool-runner'
 import { createToolRegistry } from './domain/tool-registry'
 import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from './domain/image-input'
-import { checkProvenance } from './infrastructure/provenance-client'
+import { checkProvenance, getPublicCapabilities, isProvenanceMimeSupported } from './infrastructure/provenance-client'
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import type { LocalJob } from './domain/local-job'
 import type { ToolDefinition } from './domain/tool'
@@ -34,6 +34,7 @@ export function App() {
   const [provenance, setProvenance] = useState<ProvenanceResult | null>(null)
   const [provenanceBusy, setProvenanceBusy] = useState(false)
   const [provenanceMessage, setProvenanceMessage] = useState<string | null>(null)
+  const [provenanceEnabled, setProvenanceEnabled] = useState(false)
   const [message, setMessage] = useState('选择一张图片，所有 P0 工具默认在本地运行。')
   const controllerRef = useRef<AbortController | null>(null)
   const previewUrlRef = useRef<string | null>(null)
@@ -43,6 +44,16 @@ export function App() {
     controllerRef.current?.abort()
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
     if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void getPublicCapabilities().then((capabilities) => {
+      if (active) setProvenanceEnabled(capabilities.provenance.enabled)
+    }).catch(() => {
+      if (active) setProvenanceEnabled(false)
+    })
+    return () => { active = false }
   }, [])
 
   const selectedTool = useMemo(() => registry.get(selectedToolId) ?? registry.list()[0], [selectedToolId])
@@ -151,7 +162,7 @@ export function App() {
             <input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} />
           </div>
           {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
-          {file && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}
+          {file && provenanceEnabled && isProvenanceMimeSupported(file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}
           {provenance && <ProvenanceCard result={provenance} />}
           {provenanceMessage && <p className="provenance-error">{provenanceMessage}</p>}
         </section>
