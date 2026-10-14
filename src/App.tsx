@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { validateImageFile } from './application/file-policy'
 import { runLocalTool } from './application/local-tool-runner'
 import { createToolRegistry } from './domain/tool-registry'
+import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from './domain/image-input'
 import { checkProvenance } from './infrastructure/provenance-client'
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import type { LocalJob } from './domain/local-job'
@@ -9,6 +10,11 @@ import type { ToolDefinition } from './domain/tool'
 import './styles.css'
 
 const registry = createToolRegistry()
+
+const FORMAT_LABELS: Record<string, string> = { 'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WebP' }
+const INPUT_ACCEPT = SUPPORTED_IMAGE_MIME.join(',')
+const INPUT_FORMAT_LABELS = SUPPORTED_IMAGE_MIME.map((mime) => FORMAT_LABELS[mime] ?? mime).join(' · ')
+const MAX_INPUT_MB = Math.round(MAX_INPUT_BYTES / 1024 / 1024)
 
 export function App() {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -141,8 +147,8 @@ export function App() {
         <section className="canvas-panel">
           <div className="panel-heading"><div><span className="section-label">{selectedTool.category.toUpperCase()} / {selectedTool.id.toUpperCase()}</span><h2>{selectedTool.title}</h2></div><span className="plane-chip">BROWSER</span></div>
           <div className="dropzone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]) }}>
-            {previewUrl ? <img src={previewUrl} alt="待处理图片预览" /> : <><div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>JPEG · PNG · WebP · AVIF / 最大 25 MB</span></>}
-            <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden onChange={(event) => selectFile(event.target.files?.[0])} />
+            {previewUrl ? <img src={previewUrl} alt="待处理图片预览" /> : <><div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>{INPUT_FORMAT_LABELS} / 最大 {MAX_INPUT_MB} MB</span></>}
+            <input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} />
           </div>
           {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
           {file && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}

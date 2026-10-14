@@ -44,8 +44,9 @@ describe('shared image ops', () => {
     expect(resolveGeometry('rotate', 4000, 3000, { rotation: 270 })).toEqual(expect.objectContaining({ outputWidth: 3000, outputHeight: 4000, drawWidth: 4000, drawHeight: 3000, rotation: 270 }))
   })
 
-  it('keeps the input mime for plain conversions', () => {
-    expect(resolveOutputMime('convert', 'image/avif')).toBe('image/avif')
+  it('keeps the input mime for plain conversions and honors an explicit export target', () => {
+    expect(resolveOutputMime('convert', 'image/webp')).toBe('image/webp')
+    expect(resolveOutputMime('convert', 'image/jpeg', 'image/avif')).toBe('image/avif')
   })
 
   it('forces PNG for metadata cleaning and defaults compression output to WebP', () => {

@@ -1,6 +1,7 @@
 import multipart from '@fastify/multipart'
 import Fastify from 'fastify'
 import { OpenAIProvenanceAdapter } from '../src/infrastructure/openai-provenance-adapter'
+import { MAX_INPUT_BYTES } from '../src/domain/image-input'
 import { registerProvenanceRoute } from './provenance-route'
 import { registerCapabilitiesRoute } from './capabilities-route'
 import { authorizeProvenanceRequest } from './security'
@@ -9,7 +10,7 @@ import { configureOutboundProxy } from './proxy'
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
-  const maxInputBytes = 25 * 1024 * 1024
+  const maxInputBytes = MAX_INPUT_BYTES
   await app.register(multipart, { limits: { fileSize: maxInputBytes, files: 1, parts: 1 } })
   const serverToken = process.env.ONEIMAGE_SERVER_TOKEN ?? ''
   configureOutboundProxy(process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy)

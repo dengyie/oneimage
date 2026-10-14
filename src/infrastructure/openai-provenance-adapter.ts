@@ -1,3 +1,8 @@
+import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from '../domain/image-input'
+
+const SUPPORTED_MIME = new Set<string>(SUPPORTED_IMAGE_MIME)
+const OVERSIZE_MESSAGE = `image exceeds the ${Math.round(MAX_INPUT_BYTES / 1024 / 1024)} MB limit`
+
 export interface ProvenanceEvidence {
   source: 'openai'
   signal: 'c2pa' | 'synthid'
@@ -28,9 +33,6 @@ interface OpenAIProvenanceAdapterOptions {
   timeoutMs?: number
 }
 
-const MAX_INPUT_BYTES = 25 * 1024 * 1024
-const SUPPORTED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
-
 interface OpenAIResult {
   type: 'c2pa' | 'synthid'
   outcome: 'detected' | 'not_detected'
@@ -53,8 +55,8 @@ export class OpenAIProvenanceAdapter {
 
   async check(file: Blob, filename: string): Promise<ProvenanceResult> {
     if (!this.options.apiKey.trim()) throw createProvenanceError('provider-auth', false, 401, 'OpenAI API key is missing')
-    if (!SUPPORTED_IMAGE_MIME.has(file.type)) throw createProvenanceError('invalid-input', false, 400, 'JPEG, PNG, or WebP input required')
-    if (file.size > MAX_INPUT_BYTES) throw createProvenanceError('invalid-input', false, 400, 'image exceeds the 25 MB limit')
+    if (!SUPPORTED_MIME.has(file.type)) throw createProvenanceError('invalid-input', false, 400, 'only JPEG, PNG, and WebP input is accepted')
+    if (file.size > MAX_INPUT_BYTES) throw createProvenanceError('invalid-input', false, 400, OVERSIZE_MESSAGE)
     if (!filename.trim()) throw createProvenanceError('invalid-input', false, 400, 'filename required')
 
     const form = new FormData()

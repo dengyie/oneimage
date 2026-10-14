@@ -1,14 +1,14 @@
 import type { ToolDefinition, ToolRegistry } from './tool'
+import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from './image-input'
 
-const ACCEPTED_IMAGE_MIME = Object.freeze(['image/jpeg', 'image/png', 'image/webp', 'image/avif'])
-const MAX_INPUT_BYTES = 25 * 1024 * 1024
+const ACCEPTED_IMAGE_MIME = SUPPORTED_IMAGE_MIME
 
 const definitions: readonly ToolDefinition[] = Object.freeze([
   {
     id: 'convert',
     category: 'convert',
     title: '格式转换',
-    description: '在 JPEG、PNG、WebP 与 AVIF 之间转换。',
+    description: '转换图片格式，可导出 JPEG、PNG、WebP 或 AVIF。',
     executionPlane: 'browser',
     requiresUpload: false,
     acceptedMime: ACCEPTED_IMAGE_MIME,

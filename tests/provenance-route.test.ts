@@ -2,6 +2,23 @@ import multipart from '@fastify/multipart'
 import Fastify from 'fastify'
 import { describe, expect, it, vi } from 'vitest'
 import { registerProvenanceRoute, type ProvenanceRouteSecurity } from '../server/provenance-route'
+import { SUPPORTED_IMAGE_MIME } from '../src/domain/image-input'
+
+const MAGIC_BYTES: Record<string, number[]> = {
+  'image/jpeg': [0xff, 0xd8, 0xff],
+  'image/png': [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  'image/webp': [...Buffer.from('RIFF'), 0, 0, 0, 0, ...Buffer.from('WEBP')],
+}
+
+function multipartImage(mimetype: string, bytes: number[], filename: string): { boundary: string; body: Buffer } {
+  const boundary = '----oneimage-test'
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimetype}\r\n\r\n`),
+    Buffer.from(bytes),
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ])
+  return { boundary, body }
+}
 
 describe('provenance HTTP route', () => {
   it('accepts an image multipart upload and returns normalized evidence', async () => {
@@ -147,6 +164,36 @@ describe('provenance HTTP route', () => {
 
     expect(response.statusCode).toBe(500)
     expect(response.json()).not.toHaveProperty('error.code', 'provider-error')
+    await app.close()
+  })
+
+  it.each(SUPPORTED_IMAGE_MIME)('accepts a valid %s upload through the shared input policy', async (mime) => {
+    const app = Fastify()
+    await app.register(multipart)
+    const check = vi.fn().mockResolvedValue({ source: 'openai', checkedAt: '2026-10-09T00:00:00.000Z', evidence: [] })
+    registerProvenanceRoute(app, check, { authorize: () => true, allow: () => true })
+    const { boundary, body } = multipartImage(mime, MAGIC_BYTES[mime], `sample.${mime.split('/')[1]}`)
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/provenance/openai', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body })
+
+    expect(response.statusCode).toBe(200)
+    expect(check).toHaveBeenCalledTimes(1)
+    await app.close()
+  })
+
+  it('rejects AVIF input because the provenance endpoint does not accept it', async () => {
+    const app = Fastify()
+    await app.register(multipart)
+    const check = vi.fn()
+    registerProvenanceRoute(app, check, { authorize: () => true, allow: () => true })
+    const avif = [...Buffer.from([0, 0, 0, 0x20]), ...Buffer.from('ftypavif')]
+    const { boundary, body } = multipartImage('image/avif', avif, 'sample.avif')
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/provenance/openai', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: { code: 'invalid-input', retryable: false } })
+    expect(check).not.toHaveBeenCalled()
     await app.close()
   })
 })
