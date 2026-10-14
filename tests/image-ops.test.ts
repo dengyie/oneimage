@@ -47,4 +47,9 @@ describe('shared image ops', () => {
   it('keeps the input mime for plain conversions', () => {
     expect(resolveOutputMime('convert', 'image/avif')).toBe('image/avif')
   })
+
+  it('forces PNG for metadata cleaning and defaults compression output to WebP', () => {
+    expect(resolveOutputMime('metadata-clean', 'image/jpeg', 'image/webp')).toBe('image/png')
+    expect(resolveOutputMime('compress', 'image/png')).toBe('image/webp')
+  })
 })

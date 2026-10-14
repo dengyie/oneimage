@@ -2,11 +2,6 @@ export type ExecutionPlane = 'browser' | 'cpu' | 'remote-api'
 export type ConfidenceModel = 'deterministic' | 'probabilistic' | 'classifier' | 'visual-quality' | 'none'
 export type ToolCategory = 'convert' | 'privacy' | 'generate' | 'repair' | 'inspect'
 
-export interface ToolInput {
-  file: File
-  signal?: AbortSignal
-}
-
 export interface ToolResult {
   blob: Blob
   filename: string
@@ -24,7 +19,6 @@ export interface ToolDefinition {
   maxInputBytes: number
   maxPixels?: number
   confidenceModel: ConfidenceModel
-  fallback?: string
   warningCodes: readonly string[]
 }
 

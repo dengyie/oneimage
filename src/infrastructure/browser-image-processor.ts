@@ -2,9 +2,6 @@ import type { ToolResult } from '../domain/tool'
 import { MIME_EXTENSIONS, drawWatermark, resolveGeometry, resolveOutputMime, stripExtension } from './image-ops'
 import type { ImageGeometry } from './image-ops'
 
-export { resolveGeometry, resolveOutputMime } from './image-ops'
-export type { ImageGeometry, ImageGeometryOptions } from './image-ops'
-
 export interface LocalToolOptions {
   outputMime?: string
   quality?: number
