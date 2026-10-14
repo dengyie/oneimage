@@ -15,3 +15,12 @@
 - Impact: GitHub Actions can deploy automatically without exposing a general-purpose SSH key.
 - Rollback trigger: Any receiver validation bypass or failed atomic rollback requires disabling the deployment key and restoring the previous release symlink.
 - Related files: `.github/workflows/ci.yml`, `deploy/oneimage-deploy-receiver.sh`.
+
+## 2026-10-15 - Make the accepted input formats and size ceiling a single source of truth
+
+- Decision: Define `SUPPORTED_IMAGE_MIME` (JPEG, PNG, WebP) and `MAX_INPUT_BYTES` (25 MB) once in `src/domain/image-input.ts`, and read them from browser validation, the tool registry, the server multipart limits, the provenance route, and the provider adapter. AVIF is removed from the accepted *input* set but remains a valid canvas *export* target for the convert tool.
+- Rationale: The client dropzone advertised AVIF while the server route and the OpenAI provenance endpoint only accept JPEG/PNG/WebP, so a user could select a file the API immediately rejected. The 25 MB ceiling was also restated in four places and could drift from the multipart limit.
+- Impact: Format changes are now a one-line edit; a table-driven route test pins every advertised MIME to a 200 and asserts AVIF is rejected with `400 invalid-input`.
+- Rollback trigger: If the provenance provider starts accepting AVIF, add it back to the shared list in one place and extend the table-driven test.
+- Related files: `src/domain/image-input.ts`, `src/application/file-policy.ts`, `src/domain/tool-registry.ts`, `server/provenance-route.ts`, `server/index.ts`, `src/infrastructure/openai-provenance-adapter.ts`, `src/App.tsx`.
+

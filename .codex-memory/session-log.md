@@ -20,3 +20,11 @@
 - Results: OneImage main repository is the only active source of truth; the old repository remains recoverable and traceable.
 - Next: No further deployment work for this milestone.
 - Blockers: None.
+
+## 2026-10-15 03:15
+- Task: Land two post-review commits (dead-code cleanup and shared input-format policy) and close the documentation loop.
+- Actions: Removed the `browser-image-processor` re-export shim, the unused `PublicCapabilities`/`getPublicCapabilities`, `ToolInput`, and `ToolDefinition.fallback`, plus the duplicate `tests/browser-image-processor.test.ts` (unique assertions migrated first) as `69d4572`. Introduced `src/domain/image-input.ts` as the single source of truth for accepted input MIME and the 25 MB ceiling and wired it through browser validation, the tool registry, the server multipart limits, the route, the provider adapter, and the dropzone UI; dropped AVIF from the accepted input set while keeping it a canvas export target. Added a table-driven route test for every advertised MIME plus an explicit AVIF rejection. Updated canonical Obsidian docs and repo project memory; ran `scan-stale-docs --vault .`.
+- Results: tsc clean, 46 local tests pass, frontend and server builds pass, gateway 25/25. CI run `38621428349` verify/package/deploy-pxed all green. Live `image.mangoqwq.com` confirmed: `/healthz` 200, PNG upload passes the MIME gate and reaches the provider, AVIF returns `400 invalid-input`. `scan-stale-docs` returned `RESULT=OK` (`stale_hits=0`, only pre-existing unrelated TLDR warnings).
+- Next: Owner decisions on the rate-limiter IP source and the unused tool-contract fields; otherwise P1 AI provider selection.
+- Blockers: None.
+
