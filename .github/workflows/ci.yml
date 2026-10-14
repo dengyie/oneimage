@@ -81,7 +81,13 @@ jobs:
           cp deploy/oneimage-run.sh release/run.sh
           chmod +x release/run.sh
           printf '%s\n' "$RELEASE_SHA" > release/REVISION
-          tar -C release -czf "oneimage-${RELEASE_SHA}.tar.gz" .
+          # Build the production node_modules here so the constrained pxed host
+          # performs no install at deploy time. A host-side `npm ci` was being
+          # OOM-killed under the shared container's memory pressure; the CI
+          # runner has ample memory. --dereference keeps the archive free of
+          # the relative symlinks npm creates under node_modules/.bin.
+          ( cd release && npm ci --omit=dev --ignore-scripts --no-audit --no-fund )
+          tar -C release --dereference -czf "oneimage-${RELEASE_SHA}.tar.gz" .
           sha256sum "oneimage-${RELEASE_SHA}.tar.gz" > "oneimage-${RELEASE_SHA}.tar.gz.sha256"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v6

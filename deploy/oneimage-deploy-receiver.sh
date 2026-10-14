@@ -89,9 +89,16 @@ test -s "$stage/package-lock.json"
 chmod +x "$stage/run.sh"
 chmod 0711 "$root" "$release_root" "$incoming" "$stage" "$stage/dist" "$stage/dist/assets"
 find "$stage/dist" -type f -exec chmod 0644 {} +
-cd "$stage"
-npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-cd - >/dev/null
+# The release archive ships a production node_modules built on the CI runner
+# (see the package job), so the constrained host never runs an install. Only
+# older archives without it fall back to a host npm ci.
+if [ -d "$stage/node_modules" ]; then
+  echo "release ships node_modules; skipping host npm ci"
+else
+  cd "$stage"
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+  cd - >/dev/null
+fi
 
 release="$release_root/$sha"
 if [ -e "$release" ]; then
