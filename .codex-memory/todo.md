@@ -11,10 +11,20 @@
 
 ## Manual-required
 
+(host/infra side, outside the repo-only change scope)
+
+- [ ] Raise nginx `client_max_body_size` slightly above the 25 MiB app cap (e.g. `26m`) so an
+      over-limit upload reaches the app and gets the JSON `413 payload-too-large`, not nginx's HTML page.
+- [ ] Investigate the Cloudflare-tunnel upload throughput to pxed (~60-90 KB/s); uploads above a few
+      hundred KB currently `502`. App and nginx are fast locally, so the tunnel/host egress is the limit.
+- [ ] Restore app log capture on pxed (Supervisor `stdout_logfile` is configured but `fd 1` is a pipe
+      and `out.log` stopped growing); without it the origin has no request log.
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
 
+- [x] Run an online smoke test of the production gateway (health, capabilities, validation, happy
+      path, per-client rate limit) and attribute the large-upload `502`s to the tunnel leg, not the app.
 - [x] Rate-limit per real client IP, trusting forwarded headers only from a loopback peer (`3a31e16`), with a live 429 check.
 - [x] Make `warningCodes` authoritative via `resolveToolWarnings` and delete the unenforced `maxPixels` (`70ea40e`).
 

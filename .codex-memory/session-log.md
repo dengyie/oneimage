@@ -34,3 +34,22 @@
 - Results: tsc clean, 56 local tests pass (14 files), gateway 25/25, frontend and server builds pass. Live check against the built bundle: one forwarded client is denied at request 31 (429) while 32 distinct forwarded clients all pass. CI run `38632226498` verify/package/deploy-pxed all green; live `image.mangoqwq.com` `/healthz` 200 and AVIF still `400 invalid-input`. `scan-stale-docs --vault .` returned `RESULT=OK` (`stale_hits=0`).
 - Next: P1 AI provider selection; the self-contained-bundle / `node_modules` removal item still needs an owner decision because it spans the host receiver.
 - Blockers: None.
+
+## 2026-10-15 10:30
+- Task: Run an online smoke test of the production OneImage provenance gateway.
+- Actions: Exercised `https://image.mangoqwq.com` end to end with generated fixtures: `/healthz`,
+  `/api/v1/capabilities`, non-multipart and signature/MIME-mismatch and AVIF rejections, valid JPEG/PNG/WebP,
+  a size sweep from 200 KB to 26 MB, and a 45-way parallel burst for the per-client limiter. Traced the
+  request path (Cloudflare -> cloudflared -> nginx `127.0.0.1:3302` -> app `127.0.0.1:8877`), read the
+  nginx vhost and error log, Supervisor config, and app log, and re-ran the same payloads on the origin
+  itself (app and nginx) to separate the app from the edge. Cleaned up all temporary fixtures locally
+  and on the host.
+- Results: Validation, happy path (real C2PA + SynthID evidence), the JSON error envelope, and the
+  per-client `429` all behave correctly. Two problems are on the edge/host, not in the app: (1) uploads
+  above ~200 KB through Cloudflare crawl at ~60-90 KB/s and `502`/time out, while the app does 12 MB in
+  ~5 s and nginx does 5 MB in ~2 s on loopback, so the Cloudflare-tunnel leg is the bottleneck;
+  (2) the app's stdout is not captured (fd 1 is a pipe, `out.log` frozen since 08:53 +0800). Also noted:
+  nginx `client_max_body_size 25m` == the 25 MiB app cap, so the top of the advertised range is rejected
+  by nginx with HTML instead of the JSON contract. Production is running the owner's commit `d3dad4c`.
+- Next: Owner decision on the three host-side items above; P1 AI provider selection otherwise.
+- Blockers: None in the repository; the edge/host items need host changes, which the repo-only scope excludes.
