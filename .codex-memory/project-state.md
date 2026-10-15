@@ -10,9 +10,13 @@ P0 production deployment and provenance 502 repair complete.
 
 ## Current Branch
 
-`main` at `d3dad4c` (remote `dengyie/oneimage`). `d3dad4c` is the owner's follow-up commit
-("fix: normalize provenance failures and capability gating") on top of the `70ea40e` work; it
-is the release running in production.
+`main` at `6960e56` (remote `dengyie/oneimage`). `6960e56` is a docs/memory commit directly on
+top of the owner's `d3dad4c` ("fix: normalize provenance failures and capability gating"), which
+itself sits on the `70ea40e` work. `6960e56` is the release running in production, so it already
+carries `d3dad4c`'s code. The owner's `d3dad4c` CI run `38648879582` *failed* at `deploy-pxed`
+(`install: failed to close '/personal/pxed/oneimage/run.sh.new': Disk quota exceeded`); the host
+receiver `/usr/local/sbin/oneimage-deploy` was hand-patched to manage the entrypoint with an atomic
+symlink instead of writing a second file, and `d3dad4c` was brought live without a green CI run.
 
 ## Last Verified
 
@@ -41,6 +45,10 @@ Earlier the same day: Actions run `38621428349` verify/package/deploy all succee
 - The OneImage app's stdout is not captured on pxed: `fd 1` is a pipe and `out.log` has been frozen
   since 2026-10-15 08:53 +0800, so request logs are unavailable (host-side observability gap; the pipe
   could eventually fill and block the process).
+- The pxed release parent (`/personal/pxed/oneimage`) is on NFS with a quota that can fail at `close(2)`
+  when a second file is written into it, which is what broke the `d3dad4c` deploy. The receiver must
+  keep the Supervisor entrypoint (`$root/run.sh`) as an atomic symlink to the active release; the repo
+  copy of `deploy/oneimage-deploy-receiver.sh` had drifted behind the host and has been synced back.
 
 ## Active Blockers
 

@@ -19,10 +19,16 @@
       hundred KB currently `502`. App and nginx are fast locally, so the tunnel/host egress is the limit.
 - [ ] Restore app log capture on pxed (Supervisor `stdout_logfile` is configured but `fd 1` is a pipe
       and `out.log` stopped growing); without it the origin has no request log.
+- [ ] Confirm the pxed NFS release-parent quota: the `d3dad4c` deploy failed writing `run.sh.new`
+      (`Disk quota exceeded`), now avoided by the receiver's atomic symlink. Verify the host
+      receiver `/usr/local/sbin/oneimage-deploy` stays in sync with `deploy/oneimage-deploy-receiver.sh`
+      (it had drifted; repo was synced back on 2026-10-15).
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
 
+- [x] Sync `deploy/oneimage-deploy-receiver.sh` to the hand-patched host receiver (atomic `run.sh`
+      symlink + rollback restore), closing the drift behind the `d3dad4c` `Disk quota exceeded` deploy failure.
 - [x] Run an online smoke test of the production gateway (health, capabilities, validation, happy
       path, per-client rate limit) and attribute the large-upload `502`s to the tunnel leg, not the app.
 - [x] Rate-limit per real client IP, trusting forwarded headers only from a loopback peer (`3a31e16`), with a live 429 check.

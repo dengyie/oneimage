@@ -53,3 +53,22 @@
   by nginx with HTML instead of the JSON contract. Production is running the owner's commit `d3dad4c`.
 - Next: Owner decision on the three host-side items above; P1 AI provider selection otherwise.
 - Blockers: None in the repository; the edge/host items need host changes, which the repo-only scope excludes.
+
+## 2026-10-15 11:30
+- Task: Close the smoke-test documentation loop and reconcile a deploy-script drift found while verifying CI.
+- Actions: Committed and pushed the smoke-test findings to repo memory (`6960e56`) and updated the
+  Obsidian index and dev doc; `scan-stale-docs` returned `RESULT=OK`. While confirming CI, found the
+  owner's `d3dad4c` run `38648879582` had **failed** at `deploy-pxed` with
+  `install: failed to close '/personal/pxed/oneimage/run.sh.new': Disk quota exceeded` on the NFS
+  release parent; production was instead serving `6960e56` (which carries `d3dad4c`'s code) after a
+  successful 11:07 deploy. Compared the host receiver `/usr/local/sbin/oneimage-deploy` with the repo
+  copy `deploy/oneimage-deploy-receiver.sh`: the host had been hand-patched at 06:44 to keep the
+  Supervisor entrypoint `$root/run.sh` as an atomic symlink to the active release and to restore it on
+  rollback, and the repo copy had never contained that logic in any commit. Synced the repo receiver
+  to match the host exactly (`bash -n` clean, normalized diff empty).
+- Results: repo receiver now matches the deployed host script; production healthy on `6960e56`
+  (`/healthz` 200, capabilities 200). The `d3dad4c` CI failure is historical and superseded by the
+  green `6960e56` run.
+- Next: P1 AI provider selection; host-side items (nginx `client_max_body_size`, tunnel throughput,
+  app log capture) still need an owner decision.
+- Blockers: None in the repository.

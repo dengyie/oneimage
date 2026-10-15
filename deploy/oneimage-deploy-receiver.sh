@@ -106,6 +106,13 @@ if [ -e "$release" ]; then
 else
   mv "$stage" "$release"
 fi
+test -s "$release/run.sh"
+# Keep the host Supervisor entrypoint tied to the exact release being started.
+# The release root is on NFS and writing a second file in its quota-limited
+# parent can fail at close(2), so use an atomic symlink to the validated file.
+rm -f "$root/run.sh.new"
+ln -s "$release/run.sh" "$root/run.sh.new"
+mv -Tf "$root/run.sh.new" "$root/run.sh"
 if [ -L "$current" ]; then rollback=$(readlink "$current"); fi
 ln -s "$release" "$current.new"
 mv -Tf "$current.new" "$current"
@@ -116,6 +123,11 @@ rollback_current() {
     mv -Tf "$current.new" "$current"
   else
     rm -f "$current"
+  fi
+  if [ -n "$rollback" ] && [ -s "$rollback/run.sh" ]; then
+    rm -f "$root/run.sh.new"
+    ln -s "$rollback/run.sh" "$root/run.sh.new"
+    mv -Tf "$root/run.sh.new" "$root/run.sh"
   fi
   $supervisor_ctl restart oneimage || true
 }
