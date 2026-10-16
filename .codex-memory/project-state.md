@@ -6,21 +6,23 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-P0 production deployment and provenance 502 repair complete.
+P0 production deployment and provenance request-lifecycle hardening complete locally; CI deployment pending.
 
 ## Current Branch
 
-`main` at `6960e56` (remote `dengyie/oneimage`). `6960e56` is a docs/memory commit directly on
-top of the owner's `d3dad4c` ("fix: normalize provenance failures and capability gating"), which
-itself sits on the `70ea40e` work. `6960e56` is the release running in production, so it already
-carries `d3dad4c`'s code. The owner's `d3dad4c` CI run `38648879582` *failed* at `deploy-pxed`
-(`install: failed to close '/personal/pxed/oneimage/run.sh.new': Disk quota exceeded`); the host
-receiver `/usr/local/sbin/oneimage-deploy` was hand-patched to manage the entrypoint with an atomic
-symlink instead of writing a second file, and `d3dad4c` was brought live without a green CI run.
+`main` currently has uncommitted lifecycle hardening changes on top of `b421b33`. The release
+target is the next green CI deployment: request rejected multipart streams are drained, client
+disconnects abort provider calls, Nginx forwards the Cloudflare client key, and receiver symlink
+cleanup protects active releases.
 
 ## Last Verified
 
-2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
+2026-10-16 Asia/Shanghai: local verification of the production hardening changes.
+Passed: 67 OneImage tests, TypeScript, frontend/server builds, 25 gateway tests, dependency audit,
+and receiver shell syntax checks. Added coverage for provider errors after a consumed request and
+caller-abort semantics. Deployment remains pending the next GitHub Actions run.
+
+Earlier 2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
 Passed: `/healthz` 200; `/api/v1/capabilities` 200 (`provenance.enabled=true`, provider `openai`,
 `maxInputBytes=26214400`); JSON error envelope for non-multipart, signature/MIME mismatch, and AVIF
 input (all `400 invalid-input`); happy path JPEG/PNG/WebP return `200` with real C2PA and SynthID
@@ -40,15 +42,14 @@ Earlier the same day: Actions run `38621428349` verify/package/deploy all succee
 - Large uploads through the Cloudflare tunnel to pxed are throttled (~60-90 KB/s) and fail with `502`
   above a few hundred KB. App and nginx are both fast locally, so this is host/tunnel-side and outside
   the repo-only change scope.
-- nginx `client_max_body_size 25m` equals the 25 MiB app cap (`26214400`), so multipart framing overhead
-  makes the top of the advertised range fail at nginx with its HTML `413` instead of the JSON contract.
+- The repository Nginx template now uses `client_max_body_size 26m` and forwards the Cloudflare client
+  address; pxed was already updated to the same body limit during the prior smoke-test repair.
 - The OneImage app's stdout is not captured on pxed: `fd 1` is a pipe and `out.log` has been frozen
   since 2026-10-15 08:53 +0800, so request logs are unavailable (host-side observability gap; the pipe
   could eventually fill and block the process).
-- The pxed release parent (`/personal/pxed/oneimage`) is on NFS with a quota that can fail at `close(2)`
-  when a second file is written into it, which is what broke the `d3dad4c` deploy. The receiver must
-  keep the Supervisor entrypoint (`$root/run.sh`) as an atomic symlink to the active release; the repo
-  copy of `deploy/oneimage-deploy-receiver.sh` had drifted behind the host and has been synced back.
+- The pxed release parent (`/personal/pxed/oneimage`) is on NFS with a quota that can fail at `close(2)`;
+  the receiver keeps the Supervisor entrypoint (`$root/run.sh`) as an atomic symlink, cleans stale
+  temporary symlinks, and excludes active `current`/entrypoint releases from retention cleanup.
 
 ## Active Blockers
 

@@ -21,7 +21,7 @@ export interface ProvenanceResult {
 }
 
 export interface ProvenanceError extends Error {
-  code: 'invalid-input' | 'provider-auth' | 'provider-rate-limit' | 'provider-unavailable' | 'provider-timeout' | 'provider-error'
+  code: 'invalid-input' | 'provider-auth' | 'provider-rate-limit' | 'provider-unavailable' | 'provider-timeout' | 'provider-error' | 'request-aborted'
   retryable: boolean
   status: number
 }
@@ -53,16 +53,28 @@ export class OpenAIProvenanceAdapter {
     this.timeoutMs = options.timeoutMs ?? 15_000
   }
 
-  async check(file: Blob, filename: string): Promise<ProvenanceResult> {
+  async check(file: Blob, filename: string, requestSignal?: AbortSignal): Promise<ProvenanceResult> {
     if (!this.options.apiKey.trim()) throw createProvenanceError('provider-auth', false, 401, 'OpenAI API key is missing')
     if (!SUPPORTED_MIME.has(file.type)) throw createProvenanceError('invalid-input', false, 400, 'only JPEG, PNG, and WebP input is accepted')
     if (file.size > MAX_INPUT_BYTES) throw createProvenanceError('invalid-input', false, 400, OVERSIZE_MESSAGE)
     if (!filename.trim()) throw createProvenanceError('invalid-input', false, 400, 'filename required')
+    if (requestSignal?.aborted) throw createProvenanceError('request-aborted', false, 499, 'provenance request abandoned by client')
 
     const form = new FormData()
     form.append('file', file, filename)
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    let timedOut = false
+    let requestAborted = requestSignal?.aborted ?? false
+    const onRequestAbort = () => {
+      requestAborted = true
+      controller.abort(requestSignal?.reason)
+    }
+    requestSignal?.addEventListener('abort', onRequestAbort, { once: true })
+    if (requestSignal?.aborted) onRequestAbort()
+    const timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort(new DOMException('provider request timed out', 'AbortError'))
+    }, this.timeoutMs)
     let response: Response
     try {
       response = await this.fetcher(this.endpoint, {
@@ -72,12 +84,16 @@ export class OpenAIProvenanceAdapter {
         signal: controller.signal,
       })
     } catch (cause) {
-      if (isAbortError(cause)) {
+      if (requestAborted && !timedOut) {
+        throw createProvenanceError('request-aborted', false, 499, 'provenance request abandoned by client', cause)
+      }
+      if (timedOut || isAbortError(cause)) {
         throw createProvenanceError('provider-timeout', true, 504, 'OpenAI provenance request timed out', cause)
       }
       throw createProvenanceError('provider-unavailable', true, 503, 'OpenAI provenance service is unavailable', cause)
     } finally {
       clearTimeout(timeout)
+      requestSignal?.removeEventListener('abort', onRequestAbort)
     }
 
     if (!response.ok) throw await normalizeProviderError(response)

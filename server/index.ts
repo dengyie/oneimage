@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
   registerProvenanceRoute(
     app,
-    (file, filename) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename),
+    (file, filename, signal) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename, signal),
     {
       authorize: (request) => authorizeProvenanceRequest(request.headers, serverToken, allowDevelopmentOrigin),
       allow: (request) => rateLimiter.allow(request),

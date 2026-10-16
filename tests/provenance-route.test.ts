@@ -34,7 +34,7 @@ describe('provenance HTTP route', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ source: 'openai', evidence: [{ signal: 'synthid', outcome: 'detected' }] })
-    expect(check).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png', size: 8 }), 'sample.png')
+    expect(check).toHaveBeenCalledWith(expect.objectContaining({ type: 'image/png', size: 8 }), 'sample.png', expect.any(AbortSignal))
     await app.close()
   })
 
@@ -164,6 +164,20 @@ describe('provenance HTTP route', () => {
 
     expect(response.statusCode).toBe(500)
     expect(response.json()).not.toHaveProperty('error.code', 'provider-error')
+    await app.close()
+  })
+
+  it('preserves provider errors after a fully consumed request', async () => {
+    const app = Fastify()
+    await app.register(multipart)
+    const check = vi.fn().mockRejectedValue(Object.assign(new Error('upstream failed'), { code: 'provider-unavailable', retryable: true }))
+    registerProvenanceRoute(app, check, { authorize: () => true, allow: () => true })
+    const { boundary, body } = multipartImage('image/png', MAGIC_BYTES['image/png'], 'sample.png')
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/provenance/openai', headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: body })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toMatchObject({ error: { code: 'provider-unavailable', retryable: true } })
     await app.close()
   })
 

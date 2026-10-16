@@ -2,7 +2,7 @@ import type { ProvenanceResult } from './openai-provenance-adapter'
 import { SUPPORTED_IMAGE_MIME } from '../domain/image-input'
 
 export interface ProvenanceClientError extends Error {
-  code: 'invalid-input' | 'unauthorized' | 'rate-limit' | 'provider-auth' | 'provider-timeout' | 'server-unavailable' | 'provider-error'
+  code: 'invalid-input' | 'unauthorized' | 'rate-limit' | 'provider-auth' | 'provider-timeout' | 'server-unavailable' | 'provider-error' | 'request-aborted'
   retryable: boolean
   status: number
 }

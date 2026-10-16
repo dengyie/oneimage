@@ -72,7 +72,7 @@ grep -F "  $(basename "$archive")" "$checksum" >/dev/null
 mkdir -p "$release_root" "$incoming"
 stage=$(mktemp -d "$incoming/${sha}.XXXXXX")
 rollback=''
-cleanup() { rm -rf "$stage"; }
+cleanup() { rm -rf "$stage"; rm -f "$root/run.sh.new" "$current.new"; }
 trap cleanup EXIT
 while IFS= read -r entry; do
   case "$entry" in
@@ -114,11 +114,13 @@ rm -f "$root/run.sh.new"
 ln -s "$release/run.sh" "$root/run.sh.new"
 mv -Tf "$root/run.sh.new" "$root/run.sh"
 if [ -L "$current" ]; then rollback=$(readlink "$current"); fi
+rm -f "$current.new"
 ln -s "$release" "$current.new"
 mv -Tf "$current.new" "$current"
 
 rollback_current() {
   if [ -n "$rollback" ]; then
+    rm -f "$current.new"
     ln -s "$rollback" "$current.new"
     mv -Tf "$current.new" "$current"
   else
@@ -148,6 +150,13 @@ curl --fail --silent --show-error --max-time 5 "$capabilities_url" >/tmp/oneimag
 }
 grep -q '"maxInputBytes"' /tmp/oneimage-capabilities.json || { rollback_current; exit 1; }
 rm -f "$archive" "$checksum"
+active_release=$(readlink -f "$current" 2>/dev/null || true)
+active_entrypoint=$(readlink -f "$root/run.sh" 2>/dev/null || true)
 find "$release_root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
-  | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
+  | sort -nr | tail -n +4 | cut -d' ' -f2- \
+  | while IFS= read -r candidate; do
+      [ "$candidate" = "$active_release" ] && continue
+      [ "$candidate" = "${active_entrypoint%/run.sh}" ] && continue
+      rm -rf "$candidate"
+    done
 printf 'deployed %s\n' "$sha"

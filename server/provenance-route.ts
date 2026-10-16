@@ -8,7 +8,7 @@ import type { ProvenanceResult } from '../src/infrastructure/openai-provenance-a
 import { matchesImageSignature } from '../src/application/file-policy'
 import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from '../src/domain/image-input'
 
-type ProvenanceCheck = (file: Blob, filename: string) => Promise<ProvenanceResult>
+type ProvenanceCheck = (file: Blob, filename: string, signal?: AbortSignal) => Promise<ProvenanceResult>
 
 export interface ProvenanceRouteSecurity {
   authorize(request: { headers: Record<string, string | string[] | undefined> }): boolean | Promise<boolean>
@@ -39,6 +39,7 @@ export function registerProvenanceRoute(app: FastifyInstance, check: ProvenanceC
         const part = await request.file()
         if (!part) return reply.code(400).send({ error: { code: 'invalid-input', retryable: false, message: 'image file is required' } })
         if (!ACCEPTED_MIME.has(part.mimetype)) {
+          await drainMultipartFile(part.file)
           return reply.code(400).send({ error: { code: 'invalid-input', retryable: false, message: 'JPEG, PNG, or WebP input required' } })
         }
         const directory = await mkdtemp(join(tmpdir(), 'oneimage-provenance-'))
@@ -57,18 +58,35 @@ export function registerProvenanceRoute(app: FastifyInstance, check: ProvenanceC
             await handle.close()
           }
           const file = await openAsBlob(uploadPath, { type: part.mimetype })
-          const result = await check(file, part.filename)
-          return reply.code(200).send(result)
+          const requestAbort = new AbortController()
+          const onRequestAborted = () => requestAbort.abort(new DOMException('request aborted', 'AbortError'))
+          request.raw.once('aborted', onRequestAborted)
+          try {
+            const result = await check(file, part.filename, requestAbort.signal)
+            return reply.code(200).send(result)
+          } finally {
+            request.raw.off('aborted', onRequestAborted)
+          }
         } finally {
           await rm(directory, { recursive: true, force: true })
         }
       } catch (cause) {
         const error = cause as { code?: string; retryable?: boolean; status?: number; message?: string }
+        if (error.code === 'request-aborted' || request.raw.aborted || request.raw.destroyed) {
+          request.log.info({ code: error.code ?? 'request-aborted' }, 'provenance request abandoned by client')
+          return reply
+        }
         const code = error.code === 'FST_REQ_FILE_TOO_LARGE' ? 'payload-too-large' : error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE' || error.code === 'FST_INVALID_MULTIPART_CONTENT_TYPE' ? 'invalid-input' : error.code ?? 'provider-error'
-        const status = code === 'provider-auth' ? 502 : code === 'provider-rate-limit' ? 429 : code === 'provider-unavailable' ? 503 : code === 'provider-timeout' ? 504 : code === 'payload-too-large' ? 413 : code === 'invalid-input' ? 400 : 502
+        const status = code === 'provider-auth' ? 502 : code === 'provider-rate-limit' ? 429 : code === 'provider-unavailable' ? 503 : code === 'provider-timeout' ? 504 : code === 'payload-too-large' ? 413 : code === 'invalid-input' ? 400 : code === 'request-aborted' ? 499 : 502
         request.log.error({ err: cause, code }, 'provenance request failed')
         return reply.code(status).send({ error: { code, retryable: error.retryable ?? false, message: code === 'payload-too-large' ? OVERSIZE_MESSAGE : error.message ?? 'provenance check failed' } })
       }
     })
   })
+}
+
+async function drainMultipartFile(file: AsyncIterable<unknown>): Promise<void> {
+  for await (const _chunk of file) {
+    // Consume rejected uploads so busboy can finish the request cleanly.
+  }
 }

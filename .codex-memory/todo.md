@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] None for the completed P0 deployment milestone.
+- [ ] Push and deploy the request-lifecycle hardening; verify the public smoke matrix again.
 
 ## Next
 
@@ -13,16 +13,12 @@
 
 (host/infra side, outside the repo-only change scope)
 
-- [ ] Raise nginx `client_max_body_size` slightly above the 25 MiB app cap (e.g. `26m`) so an
-      over-limit upload reaches the app and gets the JSON `413 payload-too-large`, not nginx's HTML page.
+- [x] Raise nginx `client_max_body_size` to `26m` and sync the repository template.
 - [ ] Investigate the Cloudflare-tunnel upload throughput to pxed (~60-90 KB/s); uploads above a few
       hundred KB currently `502`. App and nginx are fast locally, so the tunnel/host egress is the limit.
 - [ ] Restore app log capture on pxed (Supervisor `stdout_logfile` is configured but `fd 1` is a pipe
       and `out.log` stopped growing); without it the origin has no request log.
-- [ ] Confirm the pxed NFS release-parent quota: the `d3dad4c` deploy failed writing `run.sh.new`
-      (`Disk quota exceeded`), now avoided by the receiver's atomic symlink. Verify the host
-      receiver `/usr/local/sbin/oneimage-deploy` stays in sync with `deploy/oneimage-deploy-receiver.sh`
-      (it had drifted; repo was synced back on 2026-10-15).
+- [x] Sync the receiver's atomic entrypoint symlink logic and protect active releases during cleanup.
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
@@ -44,3 +40,5 @@
 - [x] Repin content-provenance submodule to v3 `f6b4a23`.
 - [x] Convert content-provenance from submodule to a normal package in the OneImage monorepo.
 - [x] Upgrade CI actions to Node 24 runtime.
+- [x] Drain rejected multipart streams and propagate client disconnect cancellation to the OpenAI request.
+- [x] Align the Nginx template with the trusted forwarded-client-IP rate-limit model.

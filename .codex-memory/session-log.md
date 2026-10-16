@@ -1,5 +1,11 @@
 # Session Log
 
+## 2026-10-16
+- Task: Root-fix all findings from the production code review.
+- Actions: rejected MIME multipart streams are drained; provider checks accept a request-scoped AbortSignal and classify client disconnects as non-retryable `request-aborted`; Nginx example forwards the trusted Cloudflare client IP; receiver removes stale temporary symlinks and protects the active release and entrypoint during retention cleanup.
+- Validation: OneImage 67 tests, TypeScript, frontend/server builds, gateway 25 tests, gateway audit, and receiver syntax checks pass. Provider-error-after-consumed-request and caller-abort regressions are covered.
+- Next: commit/push, wait for CI deployment, then repeat online health/capabilities/provenance checks.
+
 ## 2026-10-14 01:20
 - Task: Continue OneImage production repair and documentation closure.
 - Actions: Pulled remote `main` through `d7ca720`; confirmed submodule `f6b4a23`; inspected Actions run `38291298626`; checked pxed revision, Supervisor, Nginx, health, capabilities, and proxy environment; removed stale hardening/deployment TODO wording from canonical Obsidian docs; added repo project memory.

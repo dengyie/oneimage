@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-10-16 - Bind provider work to request lifetime and make deployment cleanup crash-safe
+
+- Decision: drain rejected multipart files, propagate request aborts to the provider fetch, trust the same forwarded client key in the Nginx template, and exclude active release symlinks from receiver retention cleanup.
+- Rationale: unconsumed multipart streams can hold request resources; disconnected clients should not keep billable provider calls alive; a template mismatch collapses rate limiting behind Nginx; and crash leftovers or active-release deletion can break the next deploy or rollback.
+- Impact: the route now has explicit request cancellation semantics, and the deploy path is recoverable after interrupted symlink swaps.
+- Related files: `server/provenance-route.ts`, `src/infrastructure/openai-provenance-adapter.ts`, `deploy/nginx-image.example.conf`, `deploy/oneimage-deploy-receiver.sh`.
+
 ## 2026-10-14 - Keep the provenance gateway in the monorepo and the default runtime same-origin
 
 - Decision: Keep `providers/content-provenance-gateway/` as a normal package in the OneImage monorepo, while keeping OneImage's default provider on its own Fastify route.

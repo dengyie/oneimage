@@ -60,6 +60,28 @@ describe('OpenAI provenance adapter', () => {
     await expect(adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png')).rejects.toMatchObject({ code: 'provider-timeout', retryable: true, status: 504 })
   })
 
+  it('propagates a caller abort as a non-retryable request-aborted error', async () => {
+    const caller = new AbortController()
+    const fetcher = vi.fn<typeof fetch>().mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject({ name: 'AbortError', message: 'client disconnected' }), { once: true })
+    }))
+    const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher, timeoutMs: 1000 })
+    const pending = adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png', caller.signal)
+    caller.abort()
+
+    await expect(pending).rejects.toMatchObject({ code: 'request-aborted', retryable: false, status: 499 })
+  })
+
+  it('does not start a provider request when the caller is already aborted', async () => {
+    const caller = new AbortController()
+    caller.abort()
+    const fetcher = vi.fn<typeof fetch>()
+    const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher })
+
+    await expect(adapter.check(new Blob(['image'], { type: 'image/png' }), 'sample.png', caller.signal)).rejects.toMatchObject({ code: 'request-aborted', status: 499 })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('rejects unsupported local input before making a provider request', async () => {
     const fetcher = vi.fn<typeof fetch>()
     const adapter = new OpenAIProvenanceAdapter({ apiKey: 'test-key', fetcher })
