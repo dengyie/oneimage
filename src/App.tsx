@@ -7,6 +7,7 @@ import { checkProvenance, getPublicCapabilities, isProvenanceMimeSupported } fro
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import type { LocalJob } from './domain/local-job'
 import type { ToolDefinition } from './domain/tool'
+import { ImageEditor } from './components/ImageEditor'
 import './styles.css'
 
 const registry = createToolRegistry()
@@ -118,6 +119,15 @@ export function App() {
     controllerRef.current?.abort()
   }
 
+  function handleEditorExport(blob: Blob, filename: string): void {
+    if (resultUrl) URL.revokeObjectURL(resultUrl)
+    const nextResultUrl = URL.createObjectURL(blob)
+    resultUrlRef.current = nextResultUrl
+    setResultUrl(nextResultUrl)
+    setResultName(filename)
+    setMessage(`已完成：${filename}，仍在本地。`)
+  }
+
   async function inspectProvenance(): Promise<void> {
     if (!file || provenanceBusy) return
     setProvenanceBusy(true)
@@ -157,10 +167,11 @@ export function App() {
 
         <section className="canvas-panel">
           <div className="panel-heading"><div><span className="section-label">{selectedTool.category.toUpperCase()} / {selectedTool.id.toUpperCase()}</span><h2>{selectedTool.title}</h2></div><span className="plane-chip">BROWSER</span></div>
-          <div className="dropzone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]) }}>
-            {previewUrl ? <img src={previewUrl} alt="待处理图片预览" /> : <><div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>{INPUT_FORMAT_LABELS} / 最大 {MAX_INPUT_MB} MB</span></>}
+          {!file && <div className="dropzone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]) }}>
+            <div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>{INPUT_FORMAT_LABELS} / 最大 {MAX_INPUT_MB} MB</span>
             <input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} />
-          </div>
+          </div>}
+          {file && <><ImageEditor key={file.name + file.lastModified} file={file} outputMime={outputMime} quality={quality / 100} onExport={handleEditorExport} /><button type="button" className="replace-image" onClick={() => inputRef.current?.click()}>更换原图</button><input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} /></>}
           {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
           {file && provenanceEnabled && isProvenanceMimeSupported(file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}
           {provenance && <ProvenanceCard result={provenance} />}
@@ -176,8 +187,8 @@ export function App() {
           {selectedTool.id === 'crop' && <div className="field-row"><label>裁剪宽度<input type="number" min="1" max="8000" value={cropWidth} onChange={(event) => setCropWidth(event.target.value)} /></label><label>裁剪高度<input type="number" min="1" max="8000" value={cropHeight} onChange={(event) => setCropHeight(event.target.value)} /></label></div>}
           {selectedTool.id === 'rotate' && <label>旋转角度<select value={rotation} onChange={(event) => setRotation(event.target.value)}><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>}
           {selectedTool.id === 'watermark' && <label>水印文字<input value={watermarkText} maxLength={80} onChange={(event) => setWatermarkText(event.target.value)} /></label>}
-          <div className="privacy-note"><span>⌁</span><div><strong>本地处理</strong><br />这次操作不会上传原图。</div></div>
-          <button className="primary-action" onClick={runTool} disabled={!file || job?.status === 'running'}>{job?.status === 'running' ? '处理中…' : '运行工具'} <span>↗</span></button>
+          <div className="privacy-note"><span>⌁</span><div><strong>本地处理</strong><br />编辑预览和导出都不会上传原图。</div></div>
+          {file && <button className="primary-action" onClick={runTool} disabled={job?.status === 'running'}>{job?.status === 'running' ? '运行旧工具中…' : '运行当前工具'} <span>↗</span></button>}
           {job?.status === 'running' && <button className="cancel-action" onClick={cancelTool}>取消任务</button>}
           <p className="status-line"><span className={`status-dot ${job?.status === 'failed' ? 'error' : ''}`} />{message}</p>
         </aside>

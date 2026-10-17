@@ -6,20 +6,20 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-P0 production deployment and provenance request-lifecycle hardening are deployed and online-verified.
+Realtime browser editor implementation complete locally; production deploy awaits final owner release gate.
 
 ## Current Branch
 
-`main` is clean at `ad1b3bb` (deployed to pxed). Request disconnects after full upload abort provider
-calls; Nginx forwards the Cloudflare client key; receiver cleanup protects active releases.
+`main` has the realtime editor changes uncommitted on top of the deployed provenance baseline. The
+editor keeps source pixels local, renders previews through a bounded Canvas proxy, and exports from
+the original resolution.
 
 ## Last Verified
 
-2026-10-17 Asia/Shanghai: `ad1b3bb` deployed through GitHub Actions run `38986421928` (verify,
-package, deploy-pxed all green). Passed: 68 OneImage tests including a real HTTP client disconnect,
-TypeScript, frontend/server builds, 25 gateway tests, dependency audit. pxed revision matches; health
-and capabilities return 200; valid public PNG provenance returns 200 with C2PA/SynthID evidence;
-malformed PNG returns 400. No provenance upload temp directories remain.
+2026-10-18 Asia/Shanghai: realtime editor work passed 81 OneImage tests, TypeScript, frontend/server
+builds, and browser QA on desktop and 390px mobile. Verified crop handles, fixed ratio, rotation,
+mirror, sharpen, local region, undo/reset, export, and no mobile horizontal overflow. Production remains
+on the previously verified `1325b1e` release until this editor change is released.
 
 Earlier 2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
 Passed: `/healthz` 200; `/api/v1/capabilities` 200 (`provenance.enabled=true`, provider `openai`,
@@ -56,7 +56,7 @@ None for the current P0 deployment milestone.
 
 ## Current Focus
 
-Keep the CI release path and canonical Obsidian deployment facts synchronized.
+Review and release the realtime editor change; then run the production CI and smoke gate.
 
 ## Next Milestone
 

@@ -1,5 +1,12 @@
 # Session Log
 
+## 2026-10-18 13:30 Asia/Shanghai
+- Task: Continue the confirmed realtime original-image editor implementation.
+- Actions: Added pure EditorState/history/geometry modules, Canvas preview/export renderer, browser bitmap decoder, interactive ImageEditor with pointer crop handles, fixed ratios, arbitrary rotation, mirror, global/local adjustments, undo/redo/reset, and export. Connected it to App while preserving provenance and existing tools. Added focused state, renderer, and interaction tests. Fixed real regressions for rotated bounding boxes, fixed-ratio resizing, and gesture history commit timing.
+- Results: 81/81 local tests pass; TypeScript, frontend build, and server build pass. Playwright loaded a valid PNG in desktop and 390px mobile viewports, exercised sharpness, local region, rotation, fixed ratio and export; canvas was nonblank and mobile had no horizontal overflow. Temporary browser dependency was not added to product manifests.
+- Next: Final code review, commit/push, CI deploy, then online smoke check.
+- Blockers: No code blocker. Production release is intentionally pending final review of the editor change.
+
 ## 2026-10-17 08:40 Asia/Shanghai
 - Task: Continue production hardening and finish the pxed/public verification for provenance cancellation.
 - Actions: Reproduced the post-upload disconnect gap with a real HTTP test (signal stayed false), then listened to response `close` while guarding against normally completed replies. Added regression coverage, ran tests/typecheck/builds/gateway suite/audit, pushed `ad1b3bb`, and followed CI deployment. Verified the pxed revision, Supervisor/Nginx state, public health/capabilities, a valid PNG provenance response, malformed image rejection, and temporary upload cleanup.

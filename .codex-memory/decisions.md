@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-10-18 - Use a parameterized local editor state with bounded preview rendering
+
+- Decision: Keep the original image immutable, store crop/transform/adjustment/local-region parameters in `EditorState`, render a max-1600px preview with `requestAnimationFrame`, and re-render the same state at source resolution for export.
+- Rationale: This supports continuous pointer/touch editing, reliable undo/redo, and local privacy without repeatedly decoding or permanently mutating pixels.
+- Alternatives considered: Re-encode after every operation was rejected because it accumulates quality loss and makes history expensive; a server editor was rejected because the product is local-first.
+- Impact: New editor logic is split into domain state, application renderer, infrastructure decoder, and React interaction component; no runtime dependency was added.
+- Rollback trigger: Browser memory limits or unsupported Canvas filter behavior require reducing preview size or disabling a filter while preserving the state contract.
+- Related files: `src/domain/editor-state.ts`, `src/application/editor-renderer.ts`, `src/infrastructure/editor-canvas.ts`, `src/components/ImageEditor.tsx`, `docs/superpowers/specs/2026-10-17-realtime-image-editor-design.md`.
+
 ## 2026-10-16 - Bind provider work to request lifetime and make deployment cleanup crash-safe
 
 - Decision: drain rejected multipart files, propagate request aborts to the provider fetch, trust the same forwarded client key in the Nginx template, and exclude active release symlinks from receiver retention cleanup.
