@@ -1,5 +1,12 @@
 # Session Log
 
+## 2026-10-17 08:40 Asia/Shanghai
+- Task: Continue production hardening and finish the pxed/public verification for provenance cancellation.
+- Actions: Reproduced the post-upload disconnect gap with a real HTTP test (signal stayed false), then listened to response `close` while guarding against normally completed replies. Added regression coverage, ran tests/typecheck/builds/gateway suite/audit, pushed `ad1b3bb`, and followed CI deployment. Verified the pxed revision, Supervisor/Nginx state, public health/capabilities, a valid PNG provenance response, malformed image rejection, and temporary upload cleanup.
+- Results: CI run `38986421928` verify/package/deploy-pxed all succeeded. OneImage 68/68, gateway 25/25, typecheck/builds/audit passed. Live valid PNG returned 200 with C2PA and SynthID evidence; invalid signature returned 400. An initial smoke fixture was malformed and OpenAI correctly returned `invalid_file`; the fixture was replaced with a CRC-valid PNG before final acceptance.
+- Next: Current P0 milestone closed. Continue with the separately scoped AI image generation provider selection milestone.
+- Blockers: None for P0. Existing host backlog remains: Cloudflare large-upload throughput and formal key rotation before production release.
+
 ## 2026-10-16
 - Task: Root-fix all findings from the production code review.
 - Actions: rejected MIME multipart streams are drained; provider checks accept a request-scoped AbortSignal and classify client disconnects as non-retryable `request-aborted`; Nginx example forwards the trusted Cloudflare client IP; receiver removes stale temporary symlinks and protects the active release and entrypoint during retention cleanup.

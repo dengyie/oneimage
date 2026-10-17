@@ -6,21 +6,20 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-P0 production deployment and provenance request-lifecycle hardening complete locally; CI deployment pending.
+P0 production deployment and provenance request-lifecycle hardening are deployed and online-verified.
 
 ## Current Branch
 
-`main` currently has uncommitted lifecycle hardening changes on top of `b421b33`. The release
-target is the next green CI deployment: request rejected multipart streams are drained, client
-disconnects abort provider calls, Nginx forwards the Cloudflare client key, and receiver symlink
-cleanup protects active releases.
+`main` is clean at `ad1b3bb` (deployed to pxed). Request disconnects after full upload abort provider
+calls; Nginx forwards the Cloudflare client key; receiver cleanup protects active releases.
 
 ## Last Verified
 
-2026-10-16 Asia/Shanghai: local verification of the production hardening changes.
-Passed: 67 OneImage tests, TypeScript, frontend/server builds, 25 gateway tests, dependency audit,
-and receiver shell syntax checks. Added coverage for provider errors after a consumed request and
-caller-abort semantics. Deployment remains pending the next GitHub Actions run.
+2026-10-17 Asia/Shanghai: `ad1b3bb` deployed through GitHub Actions run `38986421928` (verify,
+package, deploy-pxed all green). Passed: 68 OneImage tests including a real HTTP client disconnect,
+TypeScript, frontend/server builds, 25 gateway tests, dependency audit. pxed revision matches; health
+and capabilities return 200; valid public PNG provenance returns 200 with C2PA/SynthID evidence;
+malformed PNG returns 400. No provenance upload temp directories remain.
 
 Earlier 2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
 Passed: `/healthz` 200; `/api/v1/capabilities` 200 (`provenance.enabled=true`, provider `openai`,

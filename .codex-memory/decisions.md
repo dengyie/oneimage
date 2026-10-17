@@ -7,6 +7,13 @@
 - Impact: the route now has explicit request cancellation semantics, and the deploy path is recoverable after interrupted symlink swaps.
 - Related files: `server/provenance-route.ts`, `src/infrastructure/openai-provenance-adapter.ts`, `deploy/nginx-image.example.conf`, `deploy/oneimage-deploy-receiver.sh`.
 
+## 2026-10-17 - Treat response close as client cancellation after upload completion
+
+- Decision: Keep the request `aborted` listener for incomplete uploads and also listen to the response `close` event; abort provider work only when `reply.raw.writableEnded` is false.
+- Rationale: Once the request body is fully consumed, `IncomingMessage.aborted` no longer reports that a client stopped waiting. A response close before normal completion is the lifecycle signal that reaches the provider AbortSignal.
+- Impact: Completed uploads no longer leave billable upstream calls running after the browser disconnects; normal response completion does not self-cancel.
+- Related files: `server/provenance-route.ts`, `tests/provenance-route.test.ts`.
+
 ## 2026-10-14 - Keep the provenance gateway in the monorepo and the default runtime same-origin
 
 - Decision: Keep `providers/content-provenance-gateway/` as a normal package in the OneImage monorepo, while keeping OneImage's default provider on its own Fastify route.

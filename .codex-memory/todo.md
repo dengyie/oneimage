@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Push and deploy the request-lifecycle hardening; verify the public smoke matrix again.
+- None for the current P0 production milestone.
 
 ## Next
 
@@ -23,6 +23,9 @@
 
 ## Done
 
+- [x] Close the post-upload client-disconnect cancellation gap (`ad1b3bb`); a real HTTP regression test failed before the response-close listener and passes after it.
+- [x] Deploy `ad1b3bb` with GitHub Actions run `38986421928`; verify pxed revision and RUNNING services.
+- [x] Re-run the public production checks: health/capabilities 200, valid PNG provenance 200 with C2PA/SynthID evidence, malformed signature 400; confirm no upload temp directories remain.
 - [x] Sync `deploy/oneimage-deploy-receiver.sh` to the hand-patched host receiver (atomic `run.sh`
       symlink + rollback restore), closing the drift behind the `d3dad4c` `Disk quota exceeded` deploy failure.
 - [x] Run an online smoke test of the production gateway (health, capabilities, validation, happy
