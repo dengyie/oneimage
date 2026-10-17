@@ -181,6 +181,37 @@ describe('provenance HTTP route', () => {
     await app.close()
   })
 
+  it('aborts provider work when the client disconnects after uploading the full body', async () => {
+    const app = Fastify()
+    await app.register(multipart)
+    let providerSignal: AbortSignal | undefined
+    let onProviderStarted: (() => void) | undefined
+    const providerStarted = new Promise<void>((resolve) => { onProviderStarted = resolve })
+    const check = vi.fn((_file: Blob, _filename: string, signal?: AbortSignal) => {
+      providerSignal = signal
+      onProviderStarted?.()
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    registerProvenanceRoute(app, check, { authorize: () => true, allow: () => true })
+    const address = await app.listen({ host: '127.0.0.1', port: 0 })
+    const { boundary, body } = multipartImage('image/png', MAGIC_BYTES['image/png'], 'sample.png')
+    const responseController = new AbortController()
+    const response = fetch(`${address}/api/v1/provenance/openai`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer,
+      signal: responseController.signal,
+    })
+    await providerStarted
+
+    responseController.abort()
+    await expect(response).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(providerSignal?.aborted).toBe(true))
+    await app.close()
+  })
+
   it.each(SUPPORTED_IMAGE_MIME)('accepts a valid %s upload through the shared input policy', async (mime) => {
     const app = Fastify()
     await app.register(multipart)

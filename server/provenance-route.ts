@@ -60,12 +60,17 @@ export function registerProvenanceRoute(app: FastifyInstance, check: ProvenanceC
           const file = await openAsBlob(uploadPath, { type: part.mimetype })
           const requestAbort = new AbortController()
           const onRequestAborted = () => requestAbort.abort(new DOMException('request aborted', 'AbortError'))
+          const onResponseClosed = () => {
+            if (!reply.raw.writableEnded) requestAbort.abort(new DOMException('response closed', 'AbortError'))
+          }
           request.raw.once('aborted', onRequestAborted)
+          reply.raw.once('close', onResponseClosed)
           try {
             const result = await check(file, part.filename, requestAbort.signal)
             return reply.code(200).send(result)
           } finally {
             request.raw.off('aborted', onRequestAborted)
+            reply.raw.off('close', onResponseClosed)
           }
         } finally {
           await rm(directory, { recursive: true, force: true })
