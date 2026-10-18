@@ -6,20 +6,20 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Realtime browser editor implementation complete locally; production deploy awaits final owner release gate.
+Realtime browser editor deployed and online-verified.
 
 ## Current Branch
 
-`main` has the realtime editor changes uncommitted on top of the deployed provenance baseline. The
-editor keeps source pixels local, renders previews through a bounded Canvas proxy, and exports from
-the original resolution.
+`main` is clean at `71a6662`, deployed to pxed. The editor keeps source pixels local, renders previews
+through a bounded Canvas proxy, and exports from the original resolution.
 
 ## Last Verified
 
-2026-10-18 Asia/Shanghai: realtime editor work passed 81 OneImage tests, TypeScript, frontend/server
-builds, and browser QA on desktop and 390px mobile. Verified crop handles, fixed ratio, rotation,
-mirror, sharpen, local region, undo/reset, export, and no mobile horizontal overflow. Production remains
-on the previously verified `1325b1e` release until this editor change is released.
+2026-10-18 Asia/Shanghai: realtime editor commit `71a6662` deployed through Actions run `39071231196`
+(verify/package/deploy-pxed all green). Passed 81 OneImage tests, TypeScript, frontend/server builds,
+and browser QA on desktop and 390px mobile. Verified crop handles, fixed ratio, rotation, mirror,
+sharpen, local region, undo/reset, export, and no mobile horizontal overflow. pxed revision matches;
+Supervisor/Nginx RUNNING; public health/capabilities 200 and new static bundle served.
 
 Earlier 2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
 Passed: `/healthz` 200; `/api/v1/capabilities` 200 (`provenance.enabled=true`, provider `openai`,
@@ -56,7 +56,7 @@ None for the current P0 deployment milestone.
 
 ## Current Focus
 
-Review and release the realtime editor change; then run the production CI and smoke gate.
+Select and contract-test the first AI image generation provider with explicit cost and quota controls.
 
 ## Next Milestone
 

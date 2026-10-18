@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Commit and release the realtime browser editor after final review.
+- None for the realtime editor milestone.
 
 ## Next
 
@@ -25,6 +25,7 @@
 
 - [x] Add browser-local non-destructive editor state, preview renderer, crop gestures, fixed ratios, arbitrary rotation, mirror, global/local adjustments, history, and full-resolution export.
 - [x] Verify desktop and mobile browser workflows with temporary Playwright, including no horizontal overflow and local export.
+- [x] Commit and deploy the realtime browser editor (`71a6662`, Actions `39071231196`) and verify pxed/public release state.
 - [x] Close the post-upload client-disconnect cancellation gap (`ad1b3bb`); a real HTTP regression test failed before the response-close listener and passes after it.
 - [x] Deploy `ad1b3bb` with GitHub Actions run `38986421928`; verify pxed revision and RUNNING services.
 - [x] Re-run the public production checks: health/capabilities 200, valid PNG provenance 200 with C2PA/SynthID evidence, malformed signature 400; confirm no upload temp directories remain.

@@ -7,6 +7,13 @@
 - Next: Final code review, commit/push, CI deploy, then online smoke check.
 - Blockers: No code blocker. Production release is intentionally pending final review of the editor change.
 
+## 2026-10-18 14:05 Asia/Shanghai
+- Task: Release and online-verify the realtime editor.
+- Actions: Pushed `71a6662`, waited for Actions run `39071231196`, and checked pxed revision, Supervisor/Nginx status, public health/capabilities, and the served static bundle.
+- Results: verify/package/deploy-pxed all succeeded; pxed runs `71a6662`, both services are RUNNING, health/capabilities are 200, and the public HTML references the new bundle.
+- Next: AI image generation provider selection and contract test.
+- Blockers: Existing host backlog only: Cloudflare large-upload throughput, app log capture, and formal key rotation before production release.
+
 ## 2026-10-17 08:40 Asia/Shanghai
 - Task: Continue production hardening and finish the pxed/public verification for provenance cancellation.
 - Actions: Reproduced the post-upload disconnect gap with a real HTTP test (signal stayed false), then listened to response `close` while guarding against normally completed replies. Added regression coverage, ran tests/typecheck/builds/gateway suite/audit, pushed `ad1b3bb`, and followed CI deployment. Verified the pxed revision, Supervisor/Nginx state, public health/capabilities, a valid PNG provenance response, malformed image rejection, and temporary upload cleanup.
