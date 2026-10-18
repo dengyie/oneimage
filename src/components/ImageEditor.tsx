@@ -190,6 +190,7 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
   const viewport = rotatedDimensions(state.sourceWidth, state.sourceHeight, state.rotation)
   const cropViewport = mapSourceRectToViewport(state.crop, { width: state.sourceWidth, height: state.sourceHeight }, state.rotation, state.flipX, state.flipY)
   const cropStyle = { left: `${cropViewport.x / viewport.width * 100}%`, top: `${cropViewport.y / viewport.height * 100}%`, width: `${cropViewport.width / viewport.width * 100}%`, height: `${cropViewport.height / viewport.height * 100}%` }
+  const viewportRatio = viewport.width / viewport.height
   return <div className="image-editor">
     <div className="editor-toolbar">
       <button type="button" onClick={() => commit({ ...state, rotation: (state.rotation + 90) % 360 })} aria-label="旋转 90 度">↻</button>
@@ -202,7 +203,7 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
       <button type="button" onClick={() => setHistory({ past: [], present: createEditorState(state.sourceWidth, state.sourceHeight), future: [] })} aria-label="重置编辑">重置</button>
       <button type="button" onClick={() => void exportCurrent()} disabled={busy} className="editor-export">{busy ? '导出中…' : '导出结果 ↓'}</button>
     </div>
-    <div className="editor-surface" ref={surfaceRef} style={{ aspectRatio: `${rotatedDimensions(state.sourceWidth, state.sourceHeight, state.rotation).width} / ${rotatedDimensions(state.sourceWidth, state.sourceHeight, state.rotation).height}` }} onPointerMove={moveCropGesture} onPointerUp={finishCropGesture} onPointerCancel={finishCropGesture}>
+    <div className="editor-surface" ref={surfaceRef} style={{ aspectRatio: `${viewport.width} / ${viewport.height}`, maxWidth: `${520 * viewportRatio}px` }} onPointerMove={moveCropGesture} onPointerUp={finishCropGesture} onPointerCancel={finishCropGesture}>
       <canvas ref={canvasRef} aria-label="图片实时预览" />
       <div className="crop-overlay" style={cropStyle}>
         <div className="crop-grid" />
