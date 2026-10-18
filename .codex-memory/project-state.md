@@ -10,16 +10,17 @@ Realtime browser editor deployed and online-verified.
 
 ## Current Branch
 
-`main` is clean at `71a6662`, deployed to pxed. The editor keeps source pixels local, renders previews
+`main` is at `5137eb7`, deployed to pxed. The editor keeps source pixels local, renders previews
 through a bounded Canvas proxy, and exports from the original resolution.
 
 ## Last Verified
 
-2026-10-18 Asia/Shanghai: realtime editor commit `71a6662` deployed through Actions run `39071231196`
-(verify/package/deploy-pxed all green). Passed 81 OneImage tests, TypeScript, frontend/server builds,
-and browser QA on desktop and 390px mobile. Verified crop handles, fixed ratio, rotation, mirror,
-sharpen, local region, undo/reset, export, and no mobile horizontal overflow. pxed revision matches;
-Supervisor/Nginx RUNNING; public health/capabilities 200 and new static bundle served.
+2026-10-18 Asia/Shanghai: smoke-test found a preview aspect-ratio display bug; fix `5137eb7` deployed
+through Actions run `39121790162` (verify/package/deploy-pxed all green). Passed 81 OneImage tests,
+TypeScript, frontend build, and local browser check. Public smoke: pxed revision matches;
+Supervisor/Nginx RUNNING; health/capabilities 200; valid PNG upload, 1:1 crop overlay measured at
+ratio 1.0, local region/sharpen/rotate/mirror/export passed; 390px mobile has no horizontal overflow;
+no browser exceptions.
 
 Earlier 2026-10-15 Asia/Shanghai: Online smoke test of production `image.mangoqwq.com` (release `d3dad4c`).
 Passed: `/healthz` 200; `/api/v1/capabilities` 200 (`provenance.enabled=true`, provider `openai`,

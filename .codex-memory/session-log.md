@@ -14,6 +14,13 @@
 - Next: AI image generation provider selection and contract test.
 - Blockers: Existing host backlog only: Cloudflare large-upload throughput, app log capture, and formal key rotation before production release.
 
+## 2026-10-18 19:10 Asia/Shanghai
+- Task: Deploy the editor and run a production browser smoke test.
+- Actions: Checked the release, health/capabilities, uploaded a generated valid PNG through Playwright on the public site, exercised ratio selection, sharpen, local region, rotate, mirror and export, then checked 390px mobile layout. Found a crop overlay aspect-ratio distortion caused by the preview surface max-height, fixed it, ran all local gates, and redeployed `5137eb7`.
+- Results: Actions run `39121790162` verify/package/deploy-pxed all green. pxed revision matches; both services RUNNING; health/capabilities 200. Public crop overlay ratio now measures exactly 1.0 for 1:1, WebP export works, mobile has no horizontal overflow, and browser page errors are zero.
+- Next: Continue product work from the next active milestone.
+- Blockers: None for the editor release.
+
 ## 2026-10-17 08:40 Asia/Shanghai
 - Task: Continue production hardening and finish the pxed/public verification for provenance cancellation.
 - Actions: Reproduced the post-upload disconnect gap with a real HTTP test (signal stayed false), then listened to response `close` while guarding against normally completed replies. Added regression coverage, ran tests/typecheck/builds/gateway suite/audit, pushed `ad1b3bb`, and followed CI deployment. Verified the pxed revision, Supervisor/Nginx state, public health/capabilities, a valid PNG provenance response, malformed image rejection, and temporary upload cleanup.
