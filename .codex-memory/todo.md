@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Commit and deploy the editor root-cause fixes; verify Actions and public image editor smoke.
+- None for the editor root-cause repair milestone.
 
 ## Next
 
@@ -23,6 +23,7 @@
 
 ## Done
 
+- [x] Deploy `0ee554f` through Actions `39193251326`; verify pxed revision, Supervisor/Nginx, public health/capabilities, online rotation/local sharpening/WebP export, and 390px mobile fit.
 - [x] Feed the current editor export to the selected legacy tool and pass only options relevant to that tool.
 - [x] Apply local adjustments over the globally processed preview/export and expose explicit global/region targeting.
 - [x] Reset editor history when the same file is selected again; clear the file input after selection.

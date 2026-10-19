@@ -6,19 +6,21 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Realtime browser editor root-cause fixes validated locally; production deployment pending CI.
+Realtime browser editor root-cause fixes deployed and online-verified.
 
 ## Current Branch
 
-`main` is at `f972db0`, deployed to pxed. Local changes repair editor/tool integration, layered local
-adjustments, explicit adjustment targets, and same-file reload reset; deployment is pending CI.
+`main` is at `0ee554f`, deployed to pxed. Editor/tool integration, layered local adjustments, explicit
+adjustment targets, and same-file reload reset are repaired and publicly smoke-tested.
 
 ## Last Verified
 
 2026-10-19 Asia/Shanghai: 82 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 global/local slider targeting, local-on-global pixel composition, same-file reset, current-editor
 input into compress tool (`200x120` retained), and 390px mobile without horizontal overflow.
-Production remains at `f972db0` until the current CI deployment completes.
+Actions `39193251326` verify/package/deploy-pxed all succeeded. Public health/capabilities returned
+200; 320x180 PNG rotation/local sharpening/WebP export produced 180x320; 390px mobile had no
+horizontal overflow or browser exceptions.
 
 2026-10-18 Asia/Shanghai: smoke-test found a preview aspect-ratio display bug; fix `5137eb7` deployed
 through Actions run `39121790162` (verify/package/deploy-pxed all green). Passed 81 OneImage tests,
