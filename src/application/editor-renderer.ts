@@ -60,7 +60,7 @@ export function renderEditor(source: DecodedSource, state: EditorState, factory:
   const canvas = factory.create(dimensions.width, dimensions.height)
   const context = canvas.getContext('2d')
   if (!context) throw new Error('editor canvas unavailable')
-  drawEditor(context, source, state, dimensions.width, dimensions.height, signal, options.showFullSource ?? false)
+  drawEditor(context, source, state, factory, dimensions.width, dimensions.height, signal, options.showFullSource ?? false)
   return { canvas, ...dimensions }
 }
 
@@ -82,7 +82,7 @@ const browserScheduler: PreviewScheduler = {
   cancel: (frame) => typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame(frame) : clearTimeout(frame),
 }
 
-function drawEditor(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, source: DecodedSource, state: EditorState, outputWidth: number, outputHeight: number, signal: AbortSignal | undefined, showFullSource: boolean): void {
+function drawEditor(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, source: DecodedSource, state: EditorState, factory: CanvasFactory, outputWidth: number, outputHeight: number, signal: AbortSignal | undefined, showFullSource: boolean): void {
   const baseWidth = showFullSource ? state.sourceWidth : state.crop.width
   const baseHeight = showFullSource ? state.sourceHeight : state.crop.height
   const rotated = rotatedDimensions(baseWidth, baseHeight, state.rotation)
@@ -90,20 +90,26 @@ function drawEditor(context: CanvasRenderingContext2D | OffscreenCanvasRendering
   drawSource(context, source, state, outputWidth, outputHeight, scale, state.adjustments, showFullSource)
   applySharpen(context, { x: 0, y: 0, width: outputWidth, height: outputHeight }, state.adjustments.sharpen)
   throwIfAborted(signal)
+  if (state.localAdjustments.length === 0) return
+  const layer = factory.create(outputWidth, outputHeight)
+  const layerContext = layer.getContext('2d')
+  if (!layerContext) throw new Error('editor layer unavailable')
   for (const local of state.localAdjustments) {
-    drawLocalAdjustment(context, source, state, local, outputWidth, outputHeight, scale, signal, showFullSource)
+    layerContext.clearRect(0, 0, outputWidth, outputHeight)
+    layerContext.drawImage(context.canvas, 0, 0)
+    drawLocalAdjustment(context, layer, state, local, outputWidth, outputHeight, scale, signal, showFullSource)
     applySharpen(context, toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource), local.adjustments.sharpen)
   }
 }
 
-function drawLocalAdjustment(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, source: DecodedSource, state: EditorState, local: LocalAdjustment, outputWidth: number, outputHeight: number, scale: number, signal: AbortSignal | undefined, showFullSource: boolean): void {
+function drawLocalAdjustment(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: RenderCanvas, state: EditorState, local: LocalAdjustment, outputWidth: number, outputHeight: number, scale: number, signal: AbortSignal | undefined, showFullSource: boolean): void {
   const rect = toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource)
   context.save()
   context.beginPath()
   context.rect(rect.x, rect.y, rect.width, rect.height)
   context.clip()
   context.filter = cssFilter(local.adjustments)
-  drawSource(context, source, state, outputWidth, outputHeight, scale, local.adjustments, showFullSource)
+  context.drawImage(layer as unknown as CanvasImageSource, 0, 0)
   context.restore()
   throwIfAborted(signal)
 }

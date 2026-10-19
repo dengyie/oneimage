@@ -20,6 +20,7 @@ const MAX_INPUT_MB = Math.round(MAX_INPUT_BYTES / 1024 / 1024)
 export function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [fileRevision, setFileRevision] = useState(0)
   const [selectedToolId, setSelectedToolId] = useState('convert')
   const [outputMime, setOutputMime] = useState('image/webp')
   const [quality, setQuality] = useState(88)
@@ -28,7 +29,6 @@ export function App() {
   const [cropHeight, setCropHeight] = useState('900')
   const [rotation, setRotation] = useState('90')
   const [watermarkText, setWatermarkText] = useState('OneImage')
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
   const [resultName, setResultName] = useState<string | null>(null)
   const [job, setJob] = useState<LocalJob | null>(null)
@@ -38,12 +38,10 @@ export function App() {
   const [provenanceEnabled, setProvenanceEnabled] = useState(false)
   const [message, setMessage] = useState('选择一张图片，所有 P0 工具默认在本地运行。')
   const controllerRef = useRef<AbortController | null>(null)
-  const previewUrlRef = useRef<string | null>(null)
   const resultUrlRef = useRef<string | null>(null)
 
   useEffect(() => () => {
     controllerRef.current?.abort()
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
     if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
   }, [])
 
@@ -61,17 +59,16 @@ export function App() {
 
   function selectFile(nextFile: File | undefined): void {
     if (!nextFile) return
+    controllerRef.current?.abort()
     const validation = validateImageFile(nextFile)
     if (!validation.ok) {
       setMessage(validation.message)
       return
     }
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    if (resultUrl) URL.revokeObjectURL(resultUrl)
-    const nextPreviewUrl = URL.createObjectURL(nextFile)
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
     setFile(nextFile)
-    previewUrlRef.current = nextPreviewUrl
-    setPreviewUrl(nextPreviewUrl)
+    setFileRevision((revision) => revision + 1)
+    if (inputRef.current) inputRef.current.value = ''
     resultUrlRef.current = null
     setResultUrl(null)
     setResultName(null)
@@ -80,27 +77,27 @@ export function App() {
     setMessage(`${nextFile.name} 已载入，尚未上传服务器。`)
   }
 
-  async function runTool(): Promise<void> {
-    if (!file) {
-      setMessage('请先选择图片。')
-      return
-    }
+  async function runTool(currentImage: Blob): Promise<void> {
+    if (!file) return
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
     setMessage(`${selectedTool.title}处理中…`)
     try {
-      const result = await runLocalTool(selectedTool.id, file, {
+      const input = new File([currentImage], file.name, { type: currentImage.type || file.type, lastModified: file.lastModified })
+      const options = {
         outputMime,
         quality: quality / 100,
-        width: Number(resizeWidth),
-        cropWidth: Number(cropWidth),
-        cropHeight: Number(cropHeight),
-        rotation: Number(rotation),
-        watermarkText,
+        ...(selectedTool.id === 'resize' ? { width: Number(resizeWidth) } : {}),
+        ...(selectedTool.id === 'crop' ? { cropWidth: Number(cropWidth), cropHeight: Number(cropHeight) } : {}),
+        ...(selectedTool.id === 'rotate' ? { rotation: Number(rotation) } : {}),
+        ...(selectedTool.id === 'watermark' ? { watermarkText } : {}),
+      }
+      const result = await runLocalTool(selectedTool.id, input, {
+        ...options,
       }, controller.signal, setJob)
-      if (resultUrl) URL.revokeObjectURL(resultUrl)
-      resultUrlRef.current = null
+      if (controller.signal.aborted) return
+      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
       const nextResultUrl = URL.createObjectURL(result.blob)
       resultUrlRef.current = nextResultUrl
       setResultUrl(nextResultUrl)
@@ -120,7 +117,8 @@ export function App() {
   }
 
   function handleEditorExport(blob: Blob, filename: string): void {
-    if (resultUrl) URL.revokeObjectURL(resultUrl)
+    controllerRef.current?.abort()
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
     const nextResultUrl = URL.createObjectURL(blob)
     resultUrlRef.current = nextResultUrl
     setResultUrl(nextResultUrl)
@@ -171,7 +169,7 @@ export function App() {
             <div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>{INPUT_FORMAT_LABELS} / 最大 {MAX_INPUT_MB} MB</span>
             <input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} />
           </div>}
-          {file && <><ImageEditor key={file.name + file.lastModified} file={file} outputMime={outputMime} quality={quality / 100} onExport={handleEditorExport} /><button type="button" className="replace-image" onClick={() => inputRef.current?.click()}>更换原图</button><input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} /></>}
+          {file && <><ImageEditor key={fileRevision} file={file} outputMime={outputMime} quality={quality / 100} onExport={handleEditorExport} onRunTool={runTool} /><button type="button" className="replace-image" onClick={() => inputRef.current?.click()}>更换原图</button><input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => { const selected = event.target.files?.[0]; event.currentTarget.value = ''; selectFile(selected) }} /></>}
           {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
           {file && provenanceEnabled && isProvenanceMimeSupported(file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}
           {provenance && <ProvenanceCard result={provenance} />}
@@ -188,7 +186,6 @@ export function App() {
           {selectedTool.id === 'rotate' && <label>旋转角度<select value={rotation} onChange={(event) => setRotation(event.target.value)}><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>}
           {selectedTool.id === 'watermark' && <label>水印文字<input value={watermarkText} maxLength={80} onChange={(event) => setWatermarkText(event.target.value)} /></label>}
           <div className="privacy-note"><span>⌁</span><div><strong>本地处理</strong><br />编辑预览和导出都不会上传原图。</div></div>
-          {file && <button className="primary-action" onClick={runTool} disabled={job?.status === 'running'}>{job?.status === 'running' ? '运行旧工具中…' : '运行当前工具'} <span>↗</span></button>}
           {job?.status === 'running' && <button className="cancel-action" onClick={cancelTool}>取消任务</button>}
           <p className="status-line"><span className={`status-dot ${job?.status === 'failed' ? 'error' : ''}`} />{message}</p>
         </aside>

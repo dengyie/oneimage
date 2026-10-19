@@ -58,6 +58,10 @@ h2 { font-size: 27px; margin: 8px 0 0; letter-spacing: -.04em; }
 .editor-loading { min-height: 340px; display: grid; place-items: center; color: #88a091; font: 11px 'DM Mono', monospace; }
 .editor-meta { display: flex; justify-content: space-between; gap: 12px; color: #718b79; padding: 8px 10px; font: 10px 'DM Mono', monospace; border-top: 1px solid #263b2e; }
 .editor-controls { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; padding: 12px 10px; border-top: 1px solid #263b2e; background: #101c15; }
+.adjustment-target { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.adjustment-target button, .editor-run-tool { min-height: 30px; padding: 6px 9px; background: transparent; border: 1px solid #35503d; color: #a9c1ad; font: 10px 'DM Mono', monospace; }
+.adjustment-target button.selected, .adjustment-target button:hover, .editor-run-tool:hover { border-color: #b9ff82; color: #b9ff82; }
+.editor-run-tool { grid-column: 1 / -1; justify-self: start; }
 .editor-slider { margin: 0; color: #8fa697; font: 10px 'DM Mono', monospace; }.editor-slider output { float: right; color: #b9ff82; }.editor-slider input { margin-top: 10px; }
 .local-actions { grid-column: 1 / -1; display: flex; gap: 7px; }
 .result-link { display: block; color: #b9ff82; font: 11px 'DM Mono', monospace; margin-top: 14px; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

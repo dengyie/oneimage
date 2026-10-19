@@ -9,6 +9,7 @@ export interface ImageEditorProps {
   outputMime: string
   quality: number
   onExport: (blob: Blob, filename: string) => void
+  onRunTool?: (blob: Blob) => Promise<void>
 }
 
 const factory = createBrowserCanvasFactory()
@@ -22,7 +23,7 @@ function aspectValue(value: number | null): string {
   return 'free'
 }
 
-export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditorProps) {
+export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: ImageEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const sourceRef = useRef<Awaited<ReturnType<typeof decodeEditorSource>> | null>(null)
@@ -108,7 +109,7 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
     const height = state.crop.height * 0.35
     const item: LocalAdjustment = { id: crypto.randomUUID(), rect: { x: state.crop.x + (state.crop.width - width) / 2, y: state.crop.y + (state.crop.height - height) / 2, width, height }, adjustments: { ...DEFAULT_ADJUSTMENTS } }
     commit({ ...state, localAdjustments: [...state.localAdjustments, item] })
-    setSelectedLocalId(item.id)
+    setSelectedLocalId(null)
   }
 
   function setAspectRatio(value: string): void {
@@ -186,6 +187,17 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
     } finally { setBusy(false) }
   }
 
+  async function runCurrentTool(): Promise<void> {
+    if (!sourceRef.current || !state || busy || !onRunTool) return
+    setBusy(true)
+    try {
+      await onRunTool(await exportEditor(sourceRef.current, state, factory, outputMime, quality))
+      setEditorMessage('已将当前编辑结果交给工具处理，仍在本地。')
+    } catch (error) {
+      setEditorMessage(error instanceof Error ? error.message : '工具处理失败')
+    } finally { setBusy(false) }
+  }
+
   if (!state) return <div className="editor-loading">{editorMessage}</div>
   const viewport = rotatedDimensions(state.sourceWidth, state.sourceHeight, state.rotation)
   const cropViewport = mapSourceRectToViewport(state.crop, { width: state.sourceWidth, height: state.sourceHeight }, state.rotation, state.flipX, state.flipY)
@@ -201,7 +213,8 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
       <button type="button" onClick={() => history && setHistory(undoHistory(history))} disabled={!history || !history.past.length} aria-label="撤销">↶</button>
       <button type="button" onClick={() => history && setHistory(redoHistory(history))} disabled={!history || !history.future.length} aria-label="重做">↷</button>
       <button type="button" onClick={() => setHistory({ past: [], present: createEditorState(state.sourceWidth, state.sourceHeight), future: [] })} aria-label="重置编辑">重置</button>
-      <button type="button" onClick={() => void exportCurrent()} disabled={busy} className="editor-export">{busy ? '导出中…' : '导出结果 ↓'}</button>
+      <button type="button" onClick={() => void exportCurrent()} disabled={busy} className="editor-export">{busy ? '处理中…' : '导出结果 ↓'}</button>
+      {onRunTool && <button type="button" onClick={() => void runCurrentTool()} disabled={busy} className="editor-run-tool">运行当前工具 ↗</button>}
     </div>
     <div className="editor-surface" ref={surfaceRef} style={{ aspectRatio: `${viewport.width} / ${viewport.height}`, maxWidth: `${520 * viewportRatio}px` }} onPointerMove={moveCropGesture} onPointerUp={finishCropGesture} onPointerCancel={finishCropGesture}>
       <canvas ref={canvasRef} aria-label="图片实时预览" />
@@ -214,7 +227,8 @@ export function ImageEditor({ file, outputMime, quality, onExport }: ImageEditor
       {state.localAdjustments.map((item) => { const region = mapSourceRectToViewport(item.rect, { width: state.sourceWidth, height: state.sourceHeight }, state.rotation, state.flipX, state.flipY); return <button key={item.id} type="button" className={`local-region ${item.id === selectedLocalId ? 'selected' : ''}`} style={{ left: `${region.x / viewport.width * 100}%`, top: `${region.y / viewport.height * 100}%`, width: `${region.width / viewport.width * 100}%`, height: `${region.height / viewport.height * 100}%` }} onPointerDown={(event) => startLocalGesture(event, item)} onPointerMove={moveLocalGesture} onPointerUp={finishLocalGesture} onPointerCancel={finishLocalGesture} aria-label="选择局部调整区域" /> })}
     </div>
     <div className="editor-meta"><span>{editorMessage}</span><span>{state.localAdjustments.length} 个局部区域</span></div>
-    <div className="editor-controls">
+      <div className="editor-controls">
+      <div className="adjustment-target" role="group" aria-label="调整作用范围"><button type="button" className={!selectedLocalId ? 'selected' : ''} onClick={() => setSelectedLocalId(null)}>全局</button>{state.localAdjustments.map((item, index) => <button type="button" key={item.id} className={item.id === selectedLocalId ? 'selected' : ''} onClick={() => setSelectedLocalId(item.id)}>区域 {index + 1}</button>)}</div>
       <AdjustmentControl label="亮度" value={selectedLocal?.adjustments.brightness ?? state.adjustments.brightness} onChange={(value) => updateAdjustments({ brightness: value }, selectedLocalId ?? undefined)} min={-100} max={100} />
       <AdjustmentControl label="对比度" value={selectedLocal?.adjustments.contrast ?? state.adjustments.contrast} onChange={(value) => updateAdjustments({ contrast: value }, selectedLocalId ?? undefined)} min={-100} max={100} />
       <AdjustmentControl label="饱和度" value={selectedLocal?.adjustments.saturation ?? state.adjustments.saturation} onChange={(value) => updateAdjustments({ saturation: value }, selectedLocalId ?? undefined)} min={-100} max={100} />

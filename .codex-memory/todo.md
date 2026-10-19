@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- None for the realtime editor milestone.
+- [ ] Commit and deploy the editor root-cause fixes; verify Actions and public image editor smoke.
 
 ## Next
 
@@ -22,6 +22,11 @@
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
+
+- [x] Feed the current editor export to the selected legacy tool and pass only options relevant to that tool.
+- [x] Apply local adjustments over the globally processed preview/export and expose explicit global/region targeting.
+- [x] Reset editor history when the same file is selected again; clear the file input after selection.
+- [x] Add local adjustment layering regression test; validate full flows with desktop/mobile Playwright.
 
 - [x] Add browser-local non-destructive editor state, preview renderer, crop gestures, fixed ratios, arbitrary rotation, mirror, global/local adjustments, history, and full-resolution export.
 - [x] Verify desktop and mobile browser workflows with temporary Playwright, including no horizontal overflow and local export.

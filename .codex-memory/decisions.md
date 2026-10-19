@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-10-19 - Keep tool processing downstream of the current editor snapshot
+
+- Decision: The editor's “run current tool” action exports its current state as the tool input; App passes only options consumed by the selected tool. Local adjustments composite onto the global render, and adjustment controls target global or an explicitly selected region.
+- Rationale: The prior action processed the original File and overwrote the editor result; local regions redrew original pixels and erased global adjustments; selection changed the slider target implicitly.
+- Alternatives considered: Removing the legacy tools was rejected because the registry remains part of the workbench; a hidden implicit “selected region” mode was rejected because it cannot return to global controls predictably.
+- Impact: Existing local tools remain available in the editor flow, with the current rendered state and a fresh source selection as their input.
+- Rollback trigger: If downstream tools are replaced by editor-native operations, remove the bridge and migrate their options into EditorState.
+- Related files: `src/App.tsx`, `src/components/ImageEditor.tsx`, `src/application/editor-renderer.ts`, `tests/editor-renderer.test.ts`.
+
 ## 2026-10-18 - Use a parameterized local editor state with bounded preview rendering
 
 - Decision: Keep the original image immutable, store crop/transform/adjustment/local-region parameters in `EditorState`, render a max-1600px preview with `requestAnimationFrame`, and re-render the same state at source resolution for export.

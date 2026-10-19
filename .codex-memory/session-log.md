@@ -1,5 +1,12 @@
 # Session Log
 
+## 2026-10-19 11:10 Asia/Shanghai
+- Task: Root-cause fix all editor review findings and deploy to production with real testing.
+- Actions: Routed tool execution through the current editor export and filtered options by tool; composited local regions over the globally adjusted canvas; added explicit global/region selection; reset the editor on every accepted selection and cleared the file input; added a renderer regression test.
+- Results: 82 tests, TypeScript, frontend/server builds passed. Playwright verified local/global pixel composition, control targeting, same-file reset, selected-tool processing with unchanged `200x120` dimensions, and 390px mobile fit with no page errors. Production deployment is the remaining step.
+- Next: Commit/push, wait for GitHub Actions deploy-pxed, verify revision/services and repeat public browser smoke.
+- Blockers: None observed; remote CI/deploy results not yet available.
+
 ## 2026-10-18 13:30 Asia/Shanghai
 - Task: Continue the confirmed realtime original-image editor implementation.
 - Actions: Added pure EditorState/history/geometry modules, Canvas preview/export renderer, browser bitmap decoder, interactive ImageEditor with pointer crop handles, fixed ratios, arbitrary rotation, mirror, global/local adjustments, undo/redo/reset, and export. Connected it to App while preserving provenance and existing tools. Added focused state, renderer, and interaction tests. Fixed real regressions for rotated bounding boxes, fixed-ratio resizing, and gesture history commit timing.

@@ -6,14 +6,19 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Realtime browser editor deployed and online-verified.
+Realtime browser editor root-cause fixes validated locally; production deployment pending CI.
 
 ## Current Branch
 
-`main` is at `5137eb7`, deployed to pxed. The editor keeps source pixels local, renders previews
-through a bounded Canvas proxy, and exports from the original resolution.
+`main` is at `f972db0`, deployed to pxed. Local changes repair editor/tool integration, layered local
+adjustments, explicit adjustment targets, and same-file reload reset; deployment is pending CI.
 
 ## Last Verified
+
+2026-10-19 Asia/Shanghai: 82 tests, TypeScript, frontend/server builds pass. Browser QA confirms
+global/local slider targeting, local-on-global pixel composition, same-file reset, current-editor
+input into compress tool (`200x120` retained), and 390px mobile without horizontal overflow.
+Production remains at `f972db0` until the current CI deployment completes.
 
 2026-10-18 Asia/Shanghai: smoke-test found a preview aspect-ratio display bug; fix `5137eb7` deployed
 through Actions run `39121790162` (verify/package/deploy-pxed all green). Passed 81 OneImage tests,
