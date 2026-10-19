@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- None for the editor root-cause repair milestone.
+- [ ] Run final release checks, deploy crop/mosaic fixes through GitHub Actions, and repeat the public browser smoke test.
 
 ## Next
 
@@ -22,6 +22,10 @@
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
+
+- [x] Restore usable crop resize/move interaction with an explicit centered crop entry, 32px hit targets, stable surface pointer capture, and a visible interaction hint.
+- [x] Add browser-local adjustable mosaic regions with transformed rectangular masks, nearest-neighbor preview/export rendering, and undo/redo/reset coverage.
+- [x] Verify desktop crop resize/move, Chromium touch resize, preview/export mosaic pixels, unchanged outside pixels, and 390px viewport fit locally.
 
 - [x] Deploy `0ee554f` through Actions `39193251326`; verify pxed revision, Supervisor/Nginx, public health/capabilities, online rotation/local sharpening/WebP export, and 390px mobile fit.
 - [x] Feed the current editor export to the selected legacy tool and pass only options relevant to that tool.

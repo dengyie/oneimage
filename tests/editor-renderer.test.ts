@@ -31,6 +31,9 @@ describe('editor renderer', () => {
         restore: () => {},
         beginPath: () => {},
         rect: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
         clip: () => {},
         translate: () => {},
         rotate: () => {},
@@ -59,5 +62,52 @@ describe('editor renderer', () => {
       'brightness(1.2) contrast(1) saturate(1) blur(0px)',
       'brightness(1) contrast(1) saturate(1) blur(0px)',
     ])
+  })
+
+  it('creates a block-sized mosaic layer only for the selected local region', () => {
+    const created: Array<{ width: number; height: number }> = []
+    const paths: Array<Array<{ x: number; y: number }>> = []
+    let currentPath: Array<{ x: number; y: number }> = []
+    let smoothingStates: boolean[] = []
+    const factory: CanvasFactory = {
+      create(width, height) {
+        created.push({ width, height })
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          clearRect: () => {},
+          save: () => {},
+          restore: () => {},
+          beginPath: () => { currentPath = []; paths.push(currentPath) },
+          rect: () => {},
+          moveTo: (x: number, y: number) => { currentPath.push({ x, y }) },
+          lineTo: (x: number, y: number) => { currentPath.push({ x, y }) },
+          closePath: () => {},
+          clip: () => {},
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          drawImage: () => {},
+          set filter(_value: string) {},
+          set imageSmoothingEnabled(value: boolean) { smoothingStates.push(value) },
+        }
+        return { width, height, getContext: () => context as never }
+      },
+    }
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    const state = createEditorState(100, 100)
+    state.localAdjustments = [{
+      id: 'mosaic',
+      rect: { x: 20, y: 30, width: 40, height: 30 },
+      adjustments: { ...state.adjustments },
+      mosaicBlockSize: 10,
+    } as typeof state.localAdjustments[number]]
+
+    renderEditor(source, state, factory, { maxEdge: 100, showFullSource: true })
+
+    expect(created).toEqual([{ width: 100, height: 100 }, { width: 100, height: 100 }, { width: 4, height: 3 }])
+    expect(smoothingStates).toContain(false)
+    expect(paths[0]).toEqual([{ x: 20, y: 30 }, { x: 60, y: 30 }, { x: 60, y: 60 }, { x: 20, y: 60 }])
+    expect(paths[1]).toEqual(paths[0])
   })
 })

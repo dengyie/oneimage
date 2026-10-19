@@ -1,5 +1,12 @@
 # Session Log
 
+## 2026-10-20 12:00 Asia/Shanghai
+- Task: Fix crop-frame resize/movement usability and add local pixelation redaction.
+- Actions: Added explicit centered crop selection, 32px crop hit targets and surface pointer capture; fixed transformed rectangular masks to connect corners clockwise; added bounded mosaic block state, downscaled scratch rendering and nearest-neighbor compositing; exposed “打码区域” and block-size control; clear stale region selection on undo/reset.
+- Results: 84 tests and TypeScript/frontend/server builds pass. Desktop browser resized and moved crop selection; native Chromium touch resized it; preview and PNG export show uniform mosaic blocks while outside pixels remain unchanged; undo/redo/reset works; 390px viewport has no horizontal overflow or page exceptions. CI and production deployment remain pending.
+- Next: Run gateway/security checks and documentation scan, commit/push, wait for deploy-pxed, and repeat public crop/mosaic smoke tests.
+- Blockers: None observed.
+
 ## 2026-10-19 11:10 Asia/Shanghai
 - Task: Root-cause fix all editor review findings and deploy to production with real testing.
 - Actions: Routed tool execution through the current editor export and filtered options by tool; composited local regions over the globally adjusted canvas; added explicit global/region selection; reset the editor on every accepted selection and cleared the file input; added a renderer regression test.

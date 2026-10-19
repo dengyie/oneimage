@@ -6,14 +6,19 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Realtime browser editor root-cause fixes deployed and online-verified.
+Crop interaction and local mosaic implemented and browser-verified; release checks and deployment pending.
 
 ## Current Branch
 
-`main` is at `0ee554f`, deployed to pxed. Editor/tool integration, layered local adjustments, explicit
-adjustment targets, and same-file reload reset are repaired and publicly smoke-tested.
+`main` is at `34e706e`, deployed to pxed. Current uncommitted work adds a usable crop-selection entry,
+32px pointer targets, and local pixelation; local browser verification passes.
 
 ## Last Verified
+
+2026-10-20 Asia/Shanghai: 84 tests, TypeScript, frontend/server builds pass. Browser QA confirms
+desktop crop resize/move, native touch resize with 32px target, 390px mobile fit, mosaic blocks in
+preview and full-resolution PNG export, outside-mask pixel preservation, and mosaic undo/redo/reset.
+Production is still at `34e706e`; deploy verification is pending.
 
 2026-10-19 Asia/Shanghai: 82 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 global/local slider targeting, local-on-global pixel composition, same-file reset, current-editor

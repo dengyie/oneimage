@@ -99,19 +99,54 @@ function drawEditor(context: CanvasRenderingContext2D | OffscreenCanvasRendering
     layerContext.drawImage(context.canvas, 0, 0)
     drawLocalAdjustment(context, layer, state, local, outputWidth, outputHeight, scale, signal, showFullSource)
     applySharpen(context, toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource), local.adjustments.sharpen)
+    if (local.mosaicBlockSize) applyMosaic(context, factory, local, state, outputWidth, outputHeight, scale, showFullSource)
   }
 }
 
 function drawLocalAdjustment(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: RenderCanvas, state: EditorState, local: LocalAdjustment, outputWidth: number, outputHeight: number, scale: number, signal: AbortSignal | undefined, showFullSource: boolean): void {
-  const rect = toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource)
   context.save()
   context.beginPath()
-  context.rect(rect.x, rect.y, rect.width, rect.height)
+  traceTransformedRect(context, local.rect, state, outputWidth, outputHeight, scale, showFullSource)
   context.clip()
   context.filter = cssFilter(local.adjustments)
   context.drawImage(layer as unknown as CanvasImageSource, 0, 0)
   context.restore()
   throwIfAborted(signal)
+}
+
+function applyMosaic(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, factory: CanvasFactory, local: LocalAdjustment, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
+  const rect = toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource)
+  const x = Math.max(0, Math.floor(rect.x))
+  const y = Math.max(0, Math.floor(rect.y))
+  const width = Math.min(outputWidth - x, Math.ceil(rect.x + rect.width) - x)
+  const height = Math.min(outputHeight - y, Math.ceil(rect.y + rect.height) - y)
+  if (width < 1 || height < 1) return
+  const requestedBlockSize = Number.isFinite(local.mosaicBlockSize) ? local.mosaicBlockSize! : 12
+  const blockSize = Math.max(2, Math.min(128, Math.round(requestedBlockSize * scale)))
+  const mosaicWidth = Math.max(1, Math.ceil(width / blockSize))
+  const mosaicHeight = Math.max(1, Math.ceil(height / blockSize))
+  const mosaic = factory.create(mosaicWidth, mosaicHeight)
+  const mosaicContext = mosaic.getContext('2d')
+  if (!mosaicContext) throw new Error('mosaic canvas unavailable')
+  mosaicContext.imageSmoothingEnabled = true
+  mosaicContext.drawImage(context.canvas, x, y, width, height, 0, 0, mosaicWidth, mosaicHeight)
+  context.save()
+  context.beginPath()
+  traceTransformedRect(context, local.rect, state, outputWidth, outputHeight, scale, showFullSource)
+  context.clip()
+  context.imageSmoothingEnabled = false
+  context.drawImage(mosaic as unknown as CanvasImageSource, x, y, width, height)
+  context.restore()
+}
+
+function traceTransformedRect(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, rect: Rect, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
+  const points = transformedRectPoints(rect, state, outputWidth, outputHeight, scale, showFullSource)
+  for (const index of [0, 1, 3, 2]) {
+    const point = points[index]
+    if (index === 0) context.moveTo(point.x, point.y)
+    else context.lineTo(point.x, point.y)
+  }
+  context.closePath()
 }
 
 function drawSource(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, source: DecodedSource, state: EditorState, outputWidth: number, outputHeight: number, scale: number, adjustments: Adjustments, showFullSource: boolean): void {
@@ -129,17 +164,21 @@ function drawSource(context: CanvasRenderingContext2D | OffscreenCanvasRendering
 }
 
 function toOutputRect(rect: Rect, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): Rect {
-  const points = [
-    transformPoint(rect.x, rect.y, state, outputWidth, outputHeight, scale, showFullSource),
-    transformPoint(rect.x + rect.width, rect.y, state, outputWidth, outputHeight, scale, showFullSource),
-    transformPoint(rect.x, rect.y + rect.height, state, outputWidth, outputHeight, scale, showFullSource),
-    transformPoint(rect.x + rect.width, rect.y + rect.height, state, outputWidth, outputHeight, scale, showFullSource),
-  ]
+  const points = transformedRectPoints(rect, state, outputWidth, outputHeight, scale, showFullSource)
   const xs = points.map((point) => point.x)
   const ys = points.map((point) => point.y)
   const x = Math.max(0, Math.min(...xs))
   const y = Math.max(0, Math.min(...ys))
   return { x, y, width: Math.min(outputWidth - x, Math.max(...xs) - x), height: Math.min(outputHeight - y, Math.max(...ys) - y) }
+}
+
+function transformedRectPoints(rect: Rect, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): Array<{ x: number; y: number }> {
+  return [
+    transformPoint(rect.x, rect.y, state, outputWidth, outputHeight, scale, showFullSource),
+    transformPoint(rect.x + rect.width, rect.y, state, outputWidth, outputHeight, scale, showFullSource),
+    transformPoint(rect.x, rect.y + rect.height, state, outputWidth, outputHeight, scale, showFullSource),
+    transformPoint(rect.x + rect.width, rect.y + rect.height, state, outputWidth, outputHeight, scale, showFullSource),
+  ]
 }
 
 function transformPoint(x: number, y: number, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): { x: number; y: number } {

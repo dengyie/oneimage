@@ -7,6 +7,14 @@ describe('image editor interaction model', () => {
     expect(updateCropGesture(gesture, { x: 700, y: 500 })).toEqual({ x: 400, y: 300, width: 400, height: 300 })
   })
 
+  it('shrinks a full-image selection before moving it within the source', () => {
+    const bounds = { x: 0, y: 0, width: 800, height: 600 }
+    const reduced = { x: 72, y: 54, width: 656, height: 492 }
+    const gesture = createCropGesture('move', { x: 200, y: 200 }, reduced, bounds)
+
+    expect(updateCropGesture(gesture, { x: 260, y: 230 })).toEqual({ x: 132, y: 84, width: 656, height: 492 })
+  })
+
   it('resizes from the east edge without crossing the image boundary', () => {
     const gesture = createCropGesture('e', { x: 100, y: 100 }, { x: 0, y: 0, width: 400, height: 300 }, { x: 0, y: 0, width: 800, height: 600 })
     expect(updateCropGesture(gesture, { x: 300, y: 100 })).toEqual({ x: 0, y: 0, width: 600, height: 300 })

@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-10-20 - Keep crop no-op by default and make local mosaic a bounded region operation
+
+- Decision: Preserve full-image crop on load; expose an explicit action that creates a centered 82% crop selection; use 32px pointer hit areas with compact visible markers. Model pixelation as optional `mosaicBlockSize` on a local adjustment and render it through a downscaled region canvas followed by nearest-neighbor compositing.
+- Rationale: A full-image crop cannot translate because movement is clamped to source bounds; small handles were difficult to grab. A region-sized scratch canvas limits temporary pixel work while applying identical geometry to preview and full-resolution export.
+- Alternatives considered: Changing the initial crop to 82% would make uploads silently crop by default; processing an entire full-resolution frame for mosaic would allocate unnecessary memory; server processing would break local-first privacy.
+- Impact: Crop is opt-in, mosaic stays local and participates in history, and the same transformed rectangular mask is used for local adjustments and pixelation.
+- Rollback trigger: If a target browser lacks Canvas 2D/offscreen support, preserve the local state contract and route the scratch surface through the existing HTML canvas factory fallback.
+- Related files: `src/domain/editor-state.ts`, `src/components/ImageEditor.tsx`, `src/application/editor-renderer.ts`, `tests/editor-renderer.test.ts`, `tests/image-editor-model.test.ts`.
+
 ## 2026-10-19 - Keep tool processing downstream of the current editor snapshot
 
 - Decision: The editor's “run current tool” action exports its current state as the tool input; App passes only options consumed by the selected tool. Local adjustments composite onto the global render, and adjustment controls target global or an explicitly selected region.

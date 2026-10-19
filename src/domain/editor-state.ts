@@ -17,6 +17,7 @@ export interface LocalAdjustment {
   id: string
   rect: Rect
   adjustments: Adjustments
+  mosaicBlockSize?: number
 }
 
 export interface EditorState {

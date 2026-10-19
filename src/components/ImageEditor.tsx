@@ -68,6 +68,10 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
   const selectedLocal = useMemo(() => state?.localAdjustments.find((item) => item.id === selectedLocalId) ?? null, [selectedLocalId, state])
 
   useEffect(() => {
+    if (selectedLocalId && !state?.localAdjustments.some((item) => item.id === selectedLocalId)) setSelectedLocalId(null)
+  }, [selectedLocalId, state])
+
+  useEffect(() => {
     if (!state || !sourceRef.current || !canvasRef.current) return
     renderCancelRef.current?.()
     renderAbortRef.current?.abort()
@@ -112,6 +116,37 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
     setSelectedLocalId(null)
   }
 
+  function addMosaicRegion(): void {
+    if (!state) return
+    const width = state.crop.width * 0.35
+    const height = state.crop.height * 0.35
+    const item: LocalAdjustment = {
+      id: crypto.randomUUID(),
+      rect: { x: state.crop.x + (state.crop.width - width) / 2, y: state.crop.y + (state.crop.height - height) / 2, width, height },
+      adjustments: { ...DEFAULT_ADJUSTMENTS },
+      mosaicBlockSize: 12,
+    }
+    commit({ ...state, localAdjustments: [...state.localAdjustments, item] })
+    setSelectedLocalId(item.id)
+  }
+
+  function updateMosaicBlockSize(value: number, localId: string): void {
+    if (!state) return
+    commit({ ...state, localAdjustments: state.localAdjustments.map((item) => item.id === localId ? { ...item, mosaicBlockSize: value || undefined } : item) })
+  }
+
+  function toggleCropSelection(): void {
+    if (!state) return
+    const full = state.crop.x === 0 && state.crop.y === 0 && state.crop.width === state.sourceWidth && state.crop.height === state.sourceHeight
+    if (full) {
+      const width = state.sourceWidth * 0.82
+      const height = state.sourceHeight * 0.82
+      commit({ ...state, crop: clampCrop({ x: (state.sourceWidth - width) / 2, y: (state.sourceHeight - height) / 2, width, height }, { x: 0, y: 0, width: state.sourceWidth, height: state.sourceHeight }, state.aspectRatio) })
+      return
+    }
+    commit({ ...state, crop: { x: 0, y: 0, width: state.sourceWidth, height: state.sourceHeight } })
+  }
+
   function setAspectRatio(value: string): void {
     if (!state) return
     const aspectRatio = normalizeAspectRatio(value)
@@ -124,6 +159,12 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
     setSelectedLocalId(null)
   }
 
+  function resetEditor(): void {
+    if (!state) return
+    setHistory({ past: [], present: createEditorState(state.sourceWidth, state.sourceHeight), future: [] })
+    setSelectedLocalId(null)
+  }
+
   function pointerPosition(event: PointerEvent): { x: number; y: number } {
     const rect = surfaceRef.current?.getBoundingClientRect()
     if (!rect || !state) return { x: 0, y: 0 }
@@ -133,7 +174,7 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
 
   function startCropGesture(event: PointerEvent, handle: CropHandle): void {
     if (!state) return
-    event.currentTarget.setPointerCapture(event.pointerId)
+    surfaceRef.current?.setPointerCapture(event.pointerId)
     gestureRef.current = createCropGesture(handle, pointerPosition(event), state.crop, { x: 0, y: 0, width: state.sourceWidth, height: state.sourceHeight }, state.aspectRatio)
     gestureStartStateRef.current = state
   }
@@ -153,7 +194,7 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
 
   function startLocalGesture(event: PointerEvent, item: LocalAdjustment): void {
     if (!state) return
-    event.currentTarget.setPointerCapture(event.pointerId)
+    surfaceRef.current?.setPointerCapture(event.pointerId)
     localGestureRef.current = createCropGesture('move', pointerPosition(event), item.rect, { x: 0, y: 0, width: state.sourceWidth, height: state.sourceHeight })
     localGestureStartStateRef.current = state
     localGestureIdRef.current = item.id
@@ -166,7 +207,7 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
     setHistory((current) => current ? { ...current, present: { ...current.present, localAdjustments: current.present.localAdjustments.map((item) => item.id === localGestureIdRef.current ? { ...item, rect } : item) } } : current)
   }
 
-  function finishLocalGesture(): void {
+  function finishLocalGesture(_event?: PointerEvent): void {
     if (!localGestureRef.current || !localGestureStartStateRef.current) return
     setHistory((current) => current ? { ...current, past: [...current.past, localGestureStartStateRef.current!], future: [] } : current)
     localGestureRef.current = null
@@ -208,15 +249,16 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
       <button type="button" onClick={() => commit({ ...state, rotation: (state.rotation + 90) % 360 })} aria-label="旋转 90 度">↻</button>
       <button type="button" onClick={() => commit({ ...state, flipX: !state.flipX })} aria-label="水平镜像">↔</button>
       <button type="button" onClick={() => commit({ ...state, flipY: !state.flipY })} aria-label="垂直镜像">↕</button>
+      <button type="button" onClick={toggleCropSelection} aria-label={state.crop.x === 0 && state.crop.y === 0 && state.crop.width === state.sourceWidth && state.crop.height === state.sourceHeight ? '启用裁剪选区' : '重置为整图'}>{state.crop.x === 0 && state.crop.y === 0 && state.crop.width === state.sourceWidth && state.crop.height === state.sourceHeight ? '裁剪' : '整图'}</button>
       <label className="aspect-control">比例<select aria-label="裁剪比例" value={aspectValue(state.aspectRatio)} onChange={(event) => setAspectRatio(event.target.value)}><option value="free">自由</option><option value="1:1">1:1</option><option value="4:3">4:3</option><option value="16:9">16:9</option></select></label>
       <label className="angle-control">角度<input aria-label="旋转角度" type="number" min="-180" max="180" step="1" value={state.rotation > 180 ? state.rotation - 360 : state.rotation} onChange={(event) => commit({ ...state, rotation: Number(event.target.value) || 0 })} /></label>
       <button type="button" onClick={() => history && setHistory(undoHistory(history))} disabled={!history || !history.past.length} aria-label="撤销">↶</button>
       <button type="button" onClick={() => history && setHistory(redoHistory(history))} disabled={!history || !history.future.length} aria-label="重做">↷</button>
-      <button type="button" onClick={() => setHistory({ past: [], present: createEditorState(state.sourceWidth, state.sourceHeight), future: [] })} aria-label="重置编辑">重置</button>
+      <button type="button" onClick={resetEditor} aria-label="重置编辑">重置</button>
       <button type="button" onClick={() => void exportCurrent()} disabled={busy} className="editor-export">{busy ? '处理中…' : '导出结果 ↓'}</button>
       {onRunTool && <button type="button" onClick={() => void runCurrentTool()} disabled={busy} className="editor-run-tool">运行当前工具 ↗</button>}
     </div>
-    <div className="editor-surface" ref={surfaceRef} style={{ aspectRatio: `${viewport.width} / ${viewport.height}`, maxWidth: `${520 * viewportRatio}px` }} onPointerMove={moveCropGesture} onPointerUp={finishCropGesture} onPointerCancel={finishCropGesture}>
+    <div className="editor-surface" ref={surfaceRef} style={{ aspectRatio: `${viewport.width} / ${viewport.height}`, maxWidth: `${520 * viewportRatio}px` }} onPointerMove={(event) => { moveCropGesture(event); moveLocalGesture(event) }} onPointerUp={(event) => { finishCropGesture(); finishLocalGesture(event) }} onPointerCancel={(event) => { finishCropGesture(); finishLocalGesture(event) }}>
       <canvas ref={canvasRef} aria-label="图片实时预览" />
       <div className="crop-overlay" style={cropStyle}>
         <div className="crop-grid" />
@@ -224,9 +266,9 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
         {(['n', 's', 'e', 'w'] as const).map((handle) => <button key={handle} type="button" className={`crop-handle ${handle}`} onPointerDown={(event) => startCropGesture(event, handle)} aria-label={`裁剪${handle}边`} />)}
         <button type="button" className="crop-move" onPointerDown={(event) => startCropGesture(event, 'move')} aria-label="移动裁剪框" />
       </div>
-      {state.localAdjustments.map((item) => { const region = mapSourceRectToViewport(item.rect, { width: state.sourceWidth, height: state.sourceHeight }, state.rotation, state.flipX, state.flipY); return <button key={item.id} type="button" className={`local-region ${item.id === selectedLocalId ? 'selected' : ''}`} style={{ left: `${region.x / viewport.width * 100}%`, top: `${region.y / viewport.height * 100}%`, width: `${region.width / viewport.width * 100}%`, height: `${region.height / viewport.height * 100}%` }} onPointerDown={(event) => startLocalGesture(event, item)} onPointerMove={moveLocalGesture} onPointerUp={finishLocalGesture} onPointerCancel={finishLocalGesture} aria-label="选择局部调整区域" /> })}
+      {state.localAdjustments.map((item) => { const region = mapSourceRectToViewport(item.rect, { width: state.sourceWidth, height: state.sourceHeight }, state.rotation, state.flipX, state.flipY); return <button key={item.id} type="button" className={`local-region ${item.id === selectedLocalId ? 'selected' : ''} ${item.mosaicBlockSize ? 'mosaic-region' : ''}`} style={{ left: `${region.x / viewport.width * 100}%`, top: `${region.y / viewport.height * 100}%`, width: `${region.width / viewport.width * 100}%`, height: `${region.height / viewport.height * 100}%` }} onPointerDown={(event) => startLocalGesture(event, item)} aria-label={item.mosaicBlockSize ? '移动打码区域' : '选择局部调整区域'} /> })}
     </div>
-    <div className="editor-meta"><span>{editorMessage}</span><span>{state.localAdjustments.length} 个局部区域</span></div>
+    <div className="editor-meta"><span>{editorMessage}</span><span>缩小选区后，可在框内拖动移动裁剪范围；边角可调整大小 · {state.localAdjustments.length} 个局部区域</span></div>
       <div className="editor-controls">
       <div className="adjustment-target" role="group" aria-label="调整作用范围"><button type="button" className={!selectedLocalId ? 'selected' : ''} onClick={() => setSelectedLocalId(null)}>全局</button>{state.localAdjustments.map((item, index) => <button type="button" key={item.id} className={item.id === selectedLocalId ? 'selected' : ''} onClick={() => setSelectedLocalId(item.id)}>区域 {index + 1}</button>)}</div>
       <AdjustmentControl label="亮度" value={selectedLocal?.adjustments.brightness ?? state.adjustments.brightness} onChange={(value) => updateAdjustments({ brightness: value }, selectedLocalId ?? undefined)} min={-100} max={100} />
@@ -234,7 +276,8 @@ export function ImageEditor({ file, outputMime, quality, onExport, onRunTool }: 
       <AdjustmentControl label="饱和度" value={selectedLocal?.adjustments.saturation ?? state.adjustments.saturation} onChange={(value) => updateAdjustments({ saturation: value }, selectedLocalId ?? undefined)} min={-100} max={100} />
       <AdjustmentControl label="锐化" value={selectedLocal?.adjustments.sharpen ?? state.adjustments.sharpen} onChange={(value) => updateAdjustments({ sharpen: value }, selectedLocalId ?? undefined)} min={0} max={100} />
       <AdjustmentControl label="模糊" value={selectedLocal?.adjustments.blur ?? state.adjustments.blur} onChange={(value) => updateAdjustments({ blur: value }, selectedLocalId ?? undefined)} min={0} max={20} />
-      <div className="local-actions"><button type="button" onClick={addLocalAdjustment}>＋ 局部区域</button><button type="button" onClick={deleteSelectedLocal} disabled={!selectedLocalId}>删除区域</button></div>
+      {selectedLocal && <AdjustmentControl label="马赛克块" value={selectedLocal.mosaicBlockSize ?? 0} onChange={(value) => updateMosaicBlockSize(value, selectedLocal.id)} min={0} max={48} />}
+      <div className="local-actions"><button type="button" onClick={addLocalAdjustment}>＋ 局部调整</button><button type="button" onClick={addMosaicRegion}>＋ 打码区域</button><button type="button" onClick={deleteSelectedLocal} disabled={!selectedLocalId}>删除区域</button></div>
     </div>
   </div>
 }
