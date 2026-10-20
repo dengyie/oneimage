@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Deploy provenance target fix and verify public edited-result provenance behavior.
+- None for the provenance target repair milestone.
 
 ## Next
 
@@ -23,6 +23,7 @@
 
 ## Done
 
+- [x] Deploy `4d631b9` through Actions `39472672171`; verify pxed revision/services, public health/capabilities, and edited-result provenance request targeting.
 - [x] Make provenance checks use the current edited/tool result instead of always rechecking the original file; clear stale evidence after new output and clarify C2PA/SynthID semantics.
 
 - [x] Deploy `7cfdfa3` through Actions `39319023474`; verify pxed revision, Supervisor/Nginx, public health/capabilities, crop resize/move, mosaic preview/export, outside-mask preservation, and mobile fit.

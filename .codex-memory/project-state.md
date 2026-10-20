@@ -6,13 +6,12 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Provenance target fix implemented and locally verified; deployment pending.
+Provenance target fix deployed and online-verified.
 
 ## Current Branch
 
-`main` is at `223aed4`, deployed to pxed. The current uncommitted fix makes provenance inspect the
-current edited result, clears stale evidence after new output, and labels C2PA/SynthID separately
-from visible watermark detection.
+`main` is at `4d631b9`, deployed to pxed. Provenance inspects the current edited result, clears stale
+evidence after new output, and labels C2PA/SynthID separately from visible watermark detection.
 
 ## Last Verified
 
@@ -22,9 +21,10 @@ RUNNING. Public health/capabilities returned 200. Public browser QA confirms cro
 32px hit targets, 400x300 PNG mosaic preview/export with unchanged outside pixels, 390px mobile fit,
 and no browser exceptions.
 
-2026-10-21 Asia/Shanghai: provenance regression verified locally: first request uses `original.png`,
-after export the second request uses an `edited` filename, and the old evidence card is cleared.
-Full test/build/deploy and public verification are pending.
+2026-10-21 Asia/Shanghai: Actions `39472672171` verify/package/deploy-pxed all succeeded; pxed
+revision matches and oneimage/nginx are RUNNING. Public health/capabilities returned 200. Public
+browser regression sent `original.png` before export and an `edited` filename after export; the card
+explicitly states C2PA/SynthID is not visible-watermark detection.
 Earlier the same day: 84 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 desktop crop resize/move, native touch resize with 32px target, 390px mobile fit, mosaic blocks in
 preview and full-resolution PNG export, outside-mask pixel preservation, and mosaic undo/redo/reset.

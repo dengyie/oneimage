@@ -3,8 +3,8 @@
 ## 2026-10-21 10:20 Asia/Shanghai
 - Task: Investigate why a watermark-cleared image still appeared to have a detected watermark.
 - Actions: Read canonical OneImage/pxed docs and current logs; traced App provenance flow; found it always sent the original `file` and retained the old evidence card after export. Added current-result Blob input, stale-card clearing, explicit target button labels, and C2PA/SynthID versus visible-watermark copy.
-- Results: Live logs show the provenance request returned HTTP 200 but do not log evidence bodies. Local browser regression captured two requests: `original.png` before export and an `edited` filename after export; 85 tests, TypeScript, builds, gateway tests/audit passed before this final UI-copy-only adjustment. Deployment remains pending.
-- Next: Commit/push, run CI deploy-pxed, and repeat public edited-result provenance smoke.
+- Results: Live logs show the provenance request returned HTTP 200 but do not log evidence bodies. Local and public browser regression captured two requests: `original.png` before export and an `edited` filename after export; the card now explains C2PA/SynthID semantics. 85 tests, TypeScript, builds, gateway tests/audit passed. Actions `39472672171` deployed `4d631b9`; pxed revision matches and oneimage/nginx are RUNNING; public health/capabilities 200.
+- Next: Continue with the next prioritized product milestone.
 - Blockers: None.
 
 ## 2026-10-20 12:00 Asia/Shanghai
