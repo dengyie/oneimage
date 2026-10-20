@@ -76,6 +76,7 @@ h2 { font-size: 27px; margin: 8px 0 0; letter-spacing: -.04em; }
 .provenance-card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; }
 .provenance-time, .evidence-row small { color: #698270; font: 9px 'Cascadia Code', 'Consolas', monospace; }
 .provenance-card p, .provenance-error { color: #92aa99; font: 10px/1.5 'Cascadia Code', 'Consolas', monospace; margin: 6px 0 0; }
+.provenance-card-note { color: #b9cabb; }
 .provenance-error { color: #ff9e91; }
 .evidence-row { border-top: 1px solid #263b2e; display: flex; align-items: center; gap: 9px; padding: 10px 0 0; margin-top: 9px; }
 .evidence-row strong, .evidence-row small { display: block; }

@@ -6,12 +6,13 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Crop interaction and local mosaic deployed and online-verified.
+Provenance target fix implemented and locally verified; deployment pending.
 
 ## Current Branch
 
-`main` is at `7cfdfa3`, deployed to pxed. Crop selection entry, 32px pointer targets, corrected
-rectangular masks, and local pixelation are live and publicly verified.
+`main` is at `223aed4`, deployed to pxed. The current uncommitted fix makes provenance inspect the
+current edited result, clears stale evidence after new output, and labels C2PA/SynthID separately
+from visible watermark detection.
 
 ## Last Verified
 
@@ -20,6 +21,10 @@ rectangular masks, and local pixelation are live and publicly verified.
 RUNNING. Public health/capabilities returned 200. Public browser QA confirms crop resize/move,
 32px hit targets, 400x300 PNG mosaic preview/export with unchanged outside pixels, 390px mobile fit,
 and no browser exceptions.
+
+2026-10-21 Asia/Shanghai: provenance regression verified locally: first request uses `original.png`,
+after export the second request uses an `edited` filename, and the old evidence card is cleared.
+Full test/build/deploy and public verification are pending.
 Earlier the same day: 84 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 desktop crop resize/move, native touch resize with 32px target, 390px mobile fit, mosaic blocks in
 preview and full-resolution PNG export, outside-mask pixel preservation, and mosaic undo/redo/reset.

@@ -20,6 +20,10 @@ export async function checkProvenance(file: File, fetcher: typeof fetch = fetch)
   return await response.json() as ProvenanceResult
 }
 
+export function createProvenanceInput(blob: Blob, filename: string): File {
+  return new File([blob], filename, { type: blob.type || 'application/octet-stream' })
+}
+
 export function isProvenanceMimeSupported(mime: string): boolean {
   return (SUPPORTED_IMAGE_MIME as readonly string[]).includes(mime)
 }

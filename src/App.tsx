@@ -3,7 +3,7 @@ import { validateImageFile } from './application/file-policy'
 import { runLocalTool } from './application/local-tool-runner'
 import { createToolRegistry } from './domain/tool-registry'
 import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from './domain/image-input'
-import { checkProvenance, getPublicCapabilities, isProvenanceMimeSupported } from './infrastructure/provenance-client'
+import { checkProvenance, createProvenanceInput, getPublicCapabilities, isProvenanceMimeSupported } from './infrastructure/provenance-client'
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import type { LocalJob } from './domain/local-job'
 import type { ToolDefinition } from './domain/tool'
@@ -31,6 +31,7 @@ export function App() {
   const [watermarkText, setWatermarkText] = useState('OneImage')
   const [resultUrl, setResultUrl] = useState<string | null>(null)
   const [resultName, setResultName] = useState<string | null>(null)
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null)
   const [job, setJob] = useState<LocalJob | null>(null)
   const [provenance, setProvenance] = useState<ProvenanceResult | null>(null)
   const [provenanceBusy, setProvenanceBusy] = useState(false)
@@ -72,6 +73,7 @@ export function App() {
     resultUrlRef.current = null
     setResultUrl(null)
     setResultName(null)
+    setResultBlob(null)
     setProvenance(null)
     setProvenanceMessage(null)
     setMessage(`${nextFile.name} 已载入，尚未上传服务器。`)
@@ -102,6 +104,9 @@ export function App() {
       resultUrlRef.current = nextResultUrl
       setResultUrl(nextResultUrl)
       setResultName(result.filename)
+      setResultBlob(result.blob)
+      setProvenance(null)
+      setProvenanceMessage(null)
       setMessage(`已完成：${result.filename}，仍在本地。`)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
@@ -123,6 +128,9 @@ export function App() {
     resultUrlRef.current = nextResultUrl
     setResultUrl(nextResultUrl)
     setResultName(filename)
+    setResultBlob(blob)
+    setProvenance(null)
+    setProvenanceMessage(null)
     setMessage(`已完成：${filename}，仍在本地。`)
   }
 
@@ -131,7 +139,10 @@ export function App() {
     setProvenanceBusy(true)
     setProvenanceMessage(null)
     try {
-      setProvenance(await checkProvenance(file))
+      const input = resultBlob
+        ? createProvenanceInput(resultBlob, resultName ?? 'oneimage-result.png')
+        : file
+      setProvenance(await checkProvenance(input))
     } catch (error) {
       setProvenance(null)
       setProvenanceMessage(error instanceof Error ? error.message : '来源检查失败，请稍后重试。')
@@ -171,7 +182,7 @@ export function App() {
           </div>}
           {file && <><ImageEditor key={fileRevision} file={file} outputMime={outputMime} quality={quality / 100} onExport={handleEditorExport} onRunTool={runTool} /><button type="button" className="replace-image" onClick={() => inputRef.current?.click()}>更换原图</button><input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => { const selected = event.target.files?.[0]; event.currentTarget.value = ''; selectFile(selected) }} /></>}
           {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
-          {file && provenanceEnabled && isProvenanceMimeSupported(file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : '检查 OpenAI 来源信号'} <span>⌁</span></button>}
+          {file && provenanceEnabled && isProvenanceMimeSupported(resultBlob?.type ?? file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : resultBlob ? '检查当前编辑结果的来源信号' : '检查原图的来源信号'} <span>⌁</span></button>}
           {provenance && <ProvenanceCard result={provenance} />}
           {provenanceMessage && <p className="provenance-error">{provenanceMessage}</p>}
         </section>
@@ -201,5 +212,5 @@ function ToolButton({ tool, active, onClick }: { tool: ToolDefinition; active: b
 }
 
 function ProvenanceCard({ result }: { result: ProvenanceResult }) {
-  return <div className="provenance-card"><div className="provenance-card-heading"><span className="section-label">PROVENANCE / OPENAI</span><span className="provenance-time">{new Date(result.checkedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div>{result.evidence.length === 0 ? <p>未返回可用的 OpenAI 来源信号。这个结果不等于“不是 AI 生成”。</p> : result.evidence.map((item) => <div className="evidence-row" key={item.signal}><span className={`evidence-badge ${item.outcome === 'detected' ? 'detected' : ''}`}>{item.outcome === 'detected' ? 'DETECTED' : 'NOT DETECTED'}</span><div><strong>{item.signal === 'c2pa' ? 'C2PA Content Credentials' : 'SynthID'}</strong><small>{item.signal === 'c2pa' ? `${item.issuer ?? '未知 issuer'} · ${item.validationState ?? '未验证'}` : 'OpenAI 支持的嵌入式信号'}</small></div></div>)}</div>
+  return <div className="provenance-card"><div className="provenance-card-heading"><span className="section-label">PROVENANCE / OPENAI</span><span className="provenance-time">{new Date(result.checkedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div><p className="provenance-card-note">此处检测的是 C2PA / SynthID 内容溯源信号，不是可见水印是否存在。</p>{result.evidence.length === 0 ? <p>未返回可用的 OpenAI 来源信号。这个结果不等于“不是 AI 生成”。</p> : result.evidence.map((item) => <div className="evidence-row" key={item.signal}><span className={`evidence-badge ${item.outcome === 'detected' ? 'detected' : ''}`}>{item.outcome === 'detected' ? 'DETECTED' : 'NOT DETECTED'}</span><div><strong>{item.signal === 'c2pa' ? 'C2PA Content Credentials' : 'SynthID'}</strong><small>{item.signal === 'c2pa' ? `${item.issuer ?? '未知 issuer'} · ${item.validationState ?? '未验证'}` : 'OpenAI 支持的嵌入式信号'}</small></div></div>)}</div>
 }

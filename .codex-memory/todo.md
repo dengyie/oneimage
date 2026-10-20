@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- None for the crop/mosaic repair milestone.
+- [ ] Deploy provenance target fix and verify public edited-result provenance behavior.
 
 ## Next
 
@@ -22,6 +22,8 @@
 - [ ] Rotate the dedicated OpenAI test key before any formal production release.
 
 ## Done
+
+- [x] Make provenance checks use the current edited/tool result instead of always rechecking the original file; clear stale evidence after new output and clarify C2PA/SynthID semantics.
 
 - [x] Deploy `7cfdfa3` through Actions `39319023474`; verify pxed revision, Supervisor/Nginx, public health/capabilities, crop resize/move, mosaic preview/export, outside-mask preservation, and mobile fit.
 - [x] Restore usable crop resize/move interaction with an explicit centered crop entry, 32px hit targets, stable surface pointer capture, and a visible interaction hint.

@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-10-21 - Check provenance against the current result and separate it from visible watermark detection
+
+- Decision: When an edited/tool result exists, the provenance action sends that Blob as a File; new output clears the previous evidence card. UI copy identifies the result as C2PA/SynthID content provenance, not visible-watermark detection.
+- Rationale: The prior App path always passed the original `file`, and retained evidence after export. This made a successful edit appear to still contain the original signal and conflated two different detection domains.
+- Impact: The first check after upload targets the original; the next check after export targets the edited result and cannot display stale evidence from the previous target.
+- Rollback trigger: If separate per-artifact history is required, retain an evidence record keyed by artifact URL instead of one shared card.
+- Related files: `src/App.tsx`, `src/infrastructure/provenance-client.ts`, `tests/provenance-client.test.ts`.
+
 ## 2026-10-20 - Keep crop no-op by default and make local mosaic a bounded region operation
 
 - Decision: Preserve full-image crop on load; expose an explicit action that creates a centered 82% crop selection; use 32px pointer hit areas with compact visible markers. Model pixelation as optional `mosaicBlockSize` on a local adjustment and render it through a downscaled region canvas followed by nearest-neighbor compositing.

@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkProvenance, getPublicCapabilities, isProvenanceMimeSupported } from '../src/infrastructure/provenance-client'
+import { checkProvenance, createProvenanceInput, getPublicCapabilities, isProvenanceMimeSupported } from '../src/infrastructure/provenance-client'
 
 describe('browser provenance client', () => {
+  it('wraps the current edited blob as the file sent for provenance checks', () => {
+    const input = createProvenanceInput(new Blob(['edited'], { type: 'image/png' }), 'edited.png')
+    expect(input.name).toBe('edited.png')
+    expect(input.type).toBe('image/png')
+  })
   it('posts the selected image to the same-origin route and preserves evidence', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       source: 'openai',
