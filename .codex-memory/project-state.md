@@ -6,19 +6,23 @@ Maintain OneImage as a browser-first image workbench and keep its provenance pat
 
 ## Current Phase
 
-Crop interaction and local mosaic implemented and browser-verified; release checks and deployment pending.
+Crop interaction and local mosaic deployed and online-verified.
 
 ## Current Branch
 
-`main` is at `34e706e`, deployed to pxed. Current uncommitted work adds a usable crop-selection entry,
-32px pointer targets, and local pixelation; local browser verification passes.
+`main` is at `7cfdfa3`, deployed to pxed. Crop selection entry, 32px pointer targets, corrected
+rectangular masks, and local pixelation are live and publicly verified.
 
 ## Last Verified
 
-2026-10-20 Asia/Shanghai: 84 tests, TypeScript, frontend/server builds pass. Browser QA confirms
+2026-10-20 Asia/Shanghai: 84 tests, TypeScript, frontend/server builds pass. GitHub Actions
+`39319023474` verify/package/deploy-pxed succeeded; pxed revision matches and oneimage/nginx are
+RUNNING. Public health/capabilities returned 200. Public browser QA confirms crop resize/move,
+32px hit targets, 400x300 PNG mosaic preview/export with unchanged outside pixels, 390px mobile fit,
+and no browser exceptions.
+Earlier the same day: 84 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 desktop crop resize/move, native touch resize with 32px target, 390px mobile fit, mosaic blocks in
 preview and full-resolution PNG export, outside-mask pixel preservation, and mosaic undo/redo/reset.
-Production is still at `34e706e`; deploy verification is pending.
 
 2026-10-19 Asia/Shanghai: 82 tests, TypeScript, frontend/server builds pass. Browser QA confirms
 global/local slider targeting, local-on-global pixel composition, same-file reset, current-editor

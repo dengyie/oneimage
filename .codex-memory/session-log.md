@@ -3,8 +3,8 @@
 ## 2026-10-20 12:00 Asia/Shanghai
 - Task: Fix crop-frame resize/movement usability and add local pixelation redaction.
 - Actions: Added explicit centered crop selection, 32px crop hit targets and surface pointer capture; fixed transformed rectangular masks to connect corners clockwise; added bounded mosaic block state, downscaled scratch rendering and nearest-neighbor compositing; exposed “打码区域” and block-size control; clear stale region selection on undo/reset.
-- Results: 84 tests and TypeScript/frontend/server builds pass. Desktop browser resized and moved crop selection; native Chromium touch resized it; preview and PNG export show uniform mosaic blocks while outside pixels remain unchanged; undo/redo/reset works; 390px viewport has no horizontal overflow or page exceptions. CI and production deployment remain pending.
-- Next: Run gateway/security checks and documentation scan, commit/push, wait for deploy-pxed, and repeat public crop/mosaic smoke tests.
+- Results: 84 tests and TypeScript/frontend/server builds pass. Desktop browser resized and moved crop selection; native Chromium touch resized it; preview and PNG export show uniform mosaic blocks while outside pixels remain unchanged; undo/redo/reset works; 390px viewport has no horizontal overflow or page exceptions. Actions run `39319023474` verify/package/deploy-pxed succeeded; pxed revision is `7cfdfa3`, oneimage/nginx RUNNING. Public browser smoke repeated crop resize/move, 32px hit targets, 400x300 PNG mosaic preview/export, outside-mask preservation, and mobile fit with no errors.
+- Next: Continue with the next prioritized product milestone.
 - Blockers: None observed.
 
 ## 2026-10-19 11:10 Asia/Shanghai

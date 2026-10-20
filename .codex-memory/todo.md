@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Run final release checks, deploy crop/mosaic fixes through GitHub Actions, and repeat the public browser smoke test.
+- None for the crop/mosaic repair milestone.
 
 ## Next
 
@@ -23,6 +23,7 @@
 
 ## Done
 
+- [x] Deploy `7cfdfa3` through Actions `39319023474`; verify pxed revision, Supervisor/Nginx, public health/capabilities, crop resize/move, mosaic preview/export, outside-mask preservation, and mobile fit.
 - [x] Restore usable crop resize/move interaction with an explicit centered crop entry, 32px hit targets, stable surface pointer capture, and a visible interaction hint.
 - [x] Add browser-local adjustable mosaic regions with transformed rectangular masks, nearest-neighbor preview/export rendering, and undo/redo/reset coverage.
 - [x] Verify desktop crop resize/move, Chromium touch resize, preview/export mosaic pixels, unchanged outside pixels, and 390px viewport fit locally.
