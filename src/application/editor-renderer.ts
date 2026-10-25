@@ -422,6 +422,40 @@ function drawAnnotations(
         context.textBaseline = 'bottom'
         context.fillText?.(text, 0, 0)
         context.restore?.()
+      } else if (layer.type === 'watermark') {
+        const text = layer.text || 'OneImage'
+        const isTile = layer.watermarkStyle === 'tile'
+        const fontSize = Math.max(12, Math.round((layer.fontSize || (isTile ? 22 : 16)) * scale))
+
+        context.save?.()
+        context.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
+        context.fillStyle = layer.color || '#ffffff'
+        context.globalAlpha = layer.opacity ?? (isTile ? 0.18 : 0.75)
+
+        if (isTile) {
+          const textMetrics = context.measureText ? context.measureText(text) : { width: fontSize * text.length * 0.6 }
+          const stepX = Math.max(140, textMetrics.width + 80 * scale)
+          const stepY = Math.max(90, fontSize * 4.5)
+
+          context.translate?.(outputWidth / 2, outputHeight / 2)
+          context.rotate?.((-30 * Math.PI) / 180)
+          const diag = Math.sqrt(outputWidth * outputWidth + outputHeight * outputHeight)
+          for (let y = -diag / 2; y <= diag / 2; y += stepY) {
+            for (let x = -diag / 2; x <= diag / 2; x += stepX) {
+              context.fillText?.(text, x, y)
+            }
+          }
+        } else {
+          const textMetrics = context.measureText ? context.measureText(text) : { width: fontSize * text.length * 0.6 }
+          const pad = Math.max(12, Math.round(16 * scale))
+          const x = outputWidth - textMetrics.width - pad
+          const y = outputHeight - pad
+          context.shadowColor = 'rgba(0, 0, 0, 0.75)'
+          context.shadowBlur = Math.max(2, 4 * scale)
+          context.textBaseline = 'bottom'
+          context.fillText?.(text, x, y)
+        }
+        context.restore?.()
       }
     } finally {
       context.restore?.()

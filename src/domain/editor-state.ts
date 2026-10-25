@@ -10,8 +10,9 @@ export interface Point {
   y: number
 }
 
-export type AnnotationType = 'brush' | 'highlighter' | 'arrow' | 'rect' | 'ellipse' | 'mosaic' | 'text'
+export type AnnotationType = 'brush' | 'highlighter' | 'arrow' | 'rect' | 'ellipse' | 'mosaic' | 'text' | 'watermark'
 export type TextBgStyle = 'none' | 'translucent' | 'solid'
+export type WatermarkStyle = 'tile' | 'corner'
 
 export interface AnnotationLayer {
   id: string
@@ -20,12 +21,13 @@ export interface AnnotationLayer {
   rect?: Rect                    // for rect, ellipse, mosaic, text bounding
   color: string                  // hex or rgba
   strokeWidth: number            // 2, 4, 8, etc.
-  opacity?: number               // e.g. 0.4 for highlighter
-  text?: string                  // for text annotations
+  opacity?: number               // e.g. 0.4 for highlighter, 0.2 for watermark
+  text?: string                  // for text and watermark annotations
   fontSize?: number
   textBgStyle?: TextBgStyle
   mosaicType?: 'pixel' | 'blur'  // for mosaic tool
   mosaicBlockSize?: number       // 8, 16, 24
+  watermarkStyle?: WatermarkStyle // 'tile' | 'corner'
 }
 
 export interface Adjustments {

@@ -214,4 +214,81 @@ describe('editor renderer', () => {
     expect(renderedPrimitives).toContain('ellipse')
     expect(renderedPrimitives).toContain('fillText')
   })
+
+  it('renders watermark layers for both tile and corner styles', () => {
+    const textFills: Array<{ text: string; x: number; y: number }> = []
+    let rotateCalls = 0
+    let translateCalls = 0
+    const factory: CanvasFactory = {
+      create(width, height) {
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          clearRect: () => {},
+          save: () => {},
+          restore: () => {},
+          beginPath: () => {},
+          rect: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          closePath: () => {},
+          clip: () => {},
+          stroke: () => {},
+          fill: () => {},
+          fillText: (text: string, x: number, y: number) => { textFills.push({ text, x, y }) },
+          measureText: () => ({ width: 80 }),
+          translate: () => { translateCalls += 1 },
+          rotate: () => { rotateCalls += 1 },
+          scale: () => {},
+          drawImage: () => {},
+          set filter(_value: string) {},
+          set strokeStyle(_value: string) {},
+          set fillStyle(_value: string) {},
+          set lineWidth(_value: number) {},
+          set globalAlpha(_value: number) {},
+          set font(_value: string) {},
+          set shadowColor(_value: string) {},
+          set shadowBlur(_value: number) {},
+          set textBaseline(_value: string) {},
+        }
+        return { width, height, getContext: () => context as never }
+      },
+    }
+    const source: DecodedSource = { width: 400, height: 400, draw: () => {}, close: () => {} }
+    const state = createEditorState(400, 400)
+    state.annotations = [
+      {
+        id: 'wm-tile',
+        type: 'watermark',
+        color: '#ffffff',
+        strokeWidth: 0,
+        text: 'CONFIDENTIAL',
+        watermarkStyle: 'tile',
+        opacity: 0.2,
+      },
+      {
+        id: 'wm-corner',
+        type: 'watermark',
+        color: '#ffffff',
+        strokeWidth: 0,
+        text: '© OneImage',
+        watermarkStyle: 'corner',
+        opacity: 0.8,
+      },
+    ]
+
+    renderEditor(source, state, factory, { maxEdge: 400, showFullSource: true })
+
+    expect(rotateCalls).toBeGreaterThan(0)
+    expect(translateCalls).toBeGreaterThan(0)
+    // Tiling emits multiple fillText calls across the diagonal matrix
+    const tileFills = textFills.filter((f) => f.text === 'CONFIDENTIAL')
+    expect(tileFills.length).toBeGreaterThan(5)
+
+    // Corner emits 1 fillText call positioned near bottom-right
+    const cornerFills = textFills.filter((f) => f.text === '© OneImage')
+    expect(cornerFills.length).toBe(1)
+    expect(cornerFills[0].x).toBeGreaterThan(200)
+    expect(cornerFills[0].y).toBeGreaterThan(200)
+  })
 })

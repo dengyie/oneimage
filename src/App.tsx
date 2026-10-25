@@ -20,12 +20,14 @@ import {
   getPublicCapabilities,
   isProvenanceMimeSupported,
 } from './infrastructure/provenance-client'
+import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import { CanvasViewport } from './components/editor/CanvasViewport'
 import { TopActionBar } from './components/editor/TopActionBar'
 import { BottomDock, type ActiveTool } from './components/editor/BottomDock'
 import { EmptyDropzone } from './components/editor/EmptyDropzone'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
 import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
+import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
 import './styles.css'
 
 export function App() {
@@ -72,6 +74,8 @@ export function App() {
   const [provenanceEnabled, setProvenanceEnabled] = useState(false)
   const [isCheckingProvenance, setIsCheckingProvenance] = useState(false)
   const [provenanceResult, setProvenanceResult] = useState<{ detected: boolean; note?: string } | null>(null)
+  const [provenanceResultDetail, setProvenanceResultDetail] = useState<ProvenanceResult | null>(null)
+  const [provenanceError, setProvenanceError] = useState<string | null>(null)
 
   // Viewport Camera (Pan & Zoom)
   const [zoomScale, setZoomScale] = useState(1.0)
@@ -124,6 +128,8 @@ export function App() {
         setHistory({ past: [], present: initial, future: [] })
         setActiveTool('none')
         setProvenanceResult(null)
+        setProvenanceResultDetail(null)
+        setProvenanceError(null)
 
         // Fit image nicely into screen viewport
         const margin = 120
@@ -354,6 +360,7 @@ export function App() {
         ? '已识别到数字水印或元数据来源标记'
         : '未检出嵌入式 AI 来源信号'
       setProvenanceResult({ detected, note })
+      setProvenanceResultDetail(result)
       showToast(detected ? '检出 AI 来源信号' : '未检出 AI 信号', detected ? 'info' : 'success')
     } catch (err) {
       console.error('Provenance check failed:', err)
@@ -362,6 +369,113 @@ export function App() {
       setIsCheckingProvenance(false)
     }
   }, [file, decodedSource, currentState, exportImage, showToast])
+
+  // Watermark Actions
+  const handleAddWatermark = useCallback(
+    (options: { text: string; layout: WatermarkLayout; opacity: number; color: string }) => {
+      if (!currentState) return
+      const layerId = `watermark_${Date.now()}`
+      const newLayer = {
+        id: layerId,
+        type: 'watermark' as const,
+        text: options.text,
+        watermarkStyle: options.layout,
+        opacity: options.opacity,
+        color: options.color,
+        strokeWidth: 0,
+      }
+      const next = {
+        ...currentState,
+        annotations: [...(currentState.annotations || []), newLayer],
+      }
+      handleStateChange(next)
+      handleCommitHistory(next)
+      showToast(options.layout === 'tile' ? '已添加平铺全图防盗水印' : '已添加右下角署名水印', 'success')
+    },
+    [currentState, handleStateChange, handleCommitHistory, showToast]
+  )
+
+  const handleAddEraseRegion = useCallback(
+    (eraseType: WatermarkEraseType) => {
+      if (!currentState) return
+      const cropW = currentState.crop.width
+      const cropH = currentState.crop.height
+      const boxW = Math.min(Math.round(cropW * 0.4), 320)
+      const boxH = Math.min(Math.round(cropH * 0.2), 120)
+      const boxX = currentState.crop.x + Math.round((cropW - boxW) / 2)
+      const boxY = currentState.crop.y + Math.round((cropH - boxH) / 2)
+
+      const layerId = `erase_${Date.now()}`
+      let newLayer
+      if (eraseType === 'blackout') {
+        newLayer = {
+          id: layerId,
+          type: 'rect' as const,
+          rect: { x: boxX, y: boxY, width: boxW, height: boxH },
+          color: '#000000',
+          strokeWidth: 0,
+          opacity: 1,
+        }
+      } else {
+        newLayer = {
+          id: layerId,
+          type: 'mosaic' as const,
+          rect: { x: boxX, y: boxY, width: boxW, height: boxH },
+          color: '#000000',
+          strokeWidth: 0,
+          mosaicType: (eraseType === 'blur' ? 'blur' : 'pixel') as 'blur' | 'pixel',
+          mosaicBlockSize: eraseType === 'blur' ? 24 : 16,
+        }
+      }
+      const next = {
+        ...currentState,
+        annotations: [...(currentState.annotations || []), newLayer],
+      }
+      handleStateChange(next)
+      handleCommitHistory(next)
+      showToast('已在画面中央生成水印消除遮罩选区（支持自由移动或缩放）', 'success')
+    },
+    [currentState, handleStateChange, handleCommitHistory, showToast]
+  )
+
+  const handleCheckProvenanceTarget = useCallback(
+    async (target: 'current' | 'original') => {
+      if (!file) return
+      setIsCheckingProvenance(true)
+      setProvenanceError(null)
+      try {
+        let blob: Blob
+        let filename = file.name
+        if (target === 'original') {
+          blob = file
+        } else {
+          if (!decodedSource || !currentState) return
+          const exported = await exportImage('image/jpeg', 92)
+          blob = exported.blob
+          filename = exported.filename
+        }
+        const input = createProvenanceInput(blob, filename)
+        const result = await checkProvenance(input)
+        setProvenanceResultDetail(result)
+        const detected = result.evidence.some((e) => e.outcome === 'detected')
+        const note = result.evidence.length > 0
+          ? result.evidence.map((e) => `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${e.issuer ? ` (${e.issuer})` : ''}`).join(' · ')
+          : detected
+          ? '已识别到数字水印或元数据来源标记'
+          : '未检出嵌入式 AI 来源信号'
+        setProvenanceResult({ detected, note })
+        showToast(detected ? '检出 AI / C2PA 隐形水印信号' : '未检出嵌入式 AI / C2PA 信号', detected ? 'info' : 'success')
+      } catch (err: unknown) {
+        console.error('Provenance check failed:', err)
+        const msg = err instanceof Error ? err.message : '来源检测服务响应异常'
+        setProvenanceError(msg)
+        showToast(`检测失败: ${msg}`, 'error')
+      } finally {
+        setIsCheckingProvenance(false)
+      }
+    },
+    [file, decodedSource, currentState, exportImage, showToast]
+  )
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -405,6 +519,7 @@ export function App() {
         else if (e.code === 'KeyM') setActiveTool((prev) => (prev === 'mosaic' ? 'none' : 'mosaic'))
         else if (e.code === 'KeyT') setActiveTool((prev) => (prev === 'text' ? 'none' : 'text'))
         else if (e.code === 'KeyF') setActiveTool((prev) => (prev === 'adjust' ? 'none' : 'adjust'))
+        else if (e.code === 'KeyW') setActiveTool((prev) => (prev === 'watermark' ? 'none' : 'watermark'))
         else if (e.code === 'KeyO') setActiveTool((prev) => (prev === 'compress' ? 'none' : 'compress'))
         else if (e.code === 'Backslash') setIsComparingOriginal(true)
         else if (e.code === 'Escape') setActiveTool('none')
@@ -543,6 +658,11 @@ export function App() {
             adjustments={currentState.adjustments}
             onAdjustmentsChange={handleAdjustmentsChange}
             onAdjustmentsReset={handleAdjustmentsReset}
+            onAddWatermark={handleAddWatermark}
+            onAddEraseRegion={handleAddEraseRegion}
+            onCheckProvenanceTarget={handleCheckProvenanceTarget}
+            provenanceResultDetail={provenanceResultDetail}
+            provenanceError={provenanceError}
             outputMime={outputMime}
             quality={quality}
             estimatedBytes={estimatedBytes}

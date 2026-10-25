@@ -6,9 +6,11 @@ import { MosaicSubToolbar, type MosaicType } from './SubToolbars/MosaicSubToolba
 import { TextSubToolbar } from './SubToolbars/TextSubToolbar'
 import { AdjustSubToolbar } from './SubToolbars/AdjustSubToolbar'
 import { CompressSubToolbar } from './SubToolbars/CompressSubToolbar'
+import { WatermarkSubToolbar, type WatermarkLayout, type WatermarkEraseType } from './SubToolbars/WatermarkSubToolbar'
 import type { Adjustments, TextBgStyle } from '../../domain/editor-state'
+import type { ProvenanceResult } from '../../infrastructure/openai-provenance-adapter'
 
-export type ActiveTool = 'none' | 'crop' | 'markup' | 'mosaic' | 'text' | 'adjust' | 'compress'
+export type ActiveTool = 'none' | 'crop' | 'markup' | 'mosaic' | 'text' | 'adjust' | 'watermark' | 'compress'
 
 interface BottomDockProps {
   activeTool: ActiveTool
@@ -49,6 +51,13 @@ interface BottomDockProps {
   onAdjustmentsChange: (adjustments: Adjustments) => void
   onAdjustmentsReset: () => void
 
+  // Watermark props
+  onAddWatermark: (options: { text: string; layout: WatermarkLayout; opacity: number; color: string }) => void
+  onAddEraseRegion: (eraseType: WatermarkEraseType) => void
+  onCheckProvenanceTarget: (target: 'current' | 'original') => void
+  provenanceResultDetail: ProvenanceResult | null
+  provenanceError?: string | null
+
   // Compress props
   outputMime: string
   quality: number
@@ -69,6 +78,7 @@ const TOOLS: Array<{ id: ActiveTool; label: string; shortcut: string; icon: UiIc
   { id: 'mosaic', label: '马赛克', shortcut: 'M', icon: 'mosaic' },
   { id: 'text', label: '文字', shortcut: 'T', icon: 'type' },
   { id: 'adjust', label: '滤镜调色', shortcut: 'F', icon: 'sliders' },
+  { id: 'watermark', label: '水印', shortcut: 'W', icon: 'shield-check' },
   { id: 'compress', label: '压缩格式', shortcut: 'O', icon: 'sparkles' },
 ]
 
@@ -100,6 +110,11 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   adjustments,
   onAdjustmentsChange,
   onAdjustmentsReset,
+  onAddWatermark,
+  onAddEraseRegion,
+  onCheckProvenanceTarget,
+  provenanceResultDetail,
+  provenanceError,
   outputMime,
   quality,
   estimatedBytes,
@@ -159,6 +174,16 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             adjustments={adjustments}
             onChange={onAdjustmentsChange}
             onReset={onAdjustmentsReset}
+          />
+        )}
+        {activeTool === 'watermark' && (
+          <WatermarkSubToolbar
+            onAddWatermark={onAddWatermark}
+            onAddEraseRegion={onAddEraseRegion}
+            onCheckProvenance={onCheckProvenanceTarget}
+            isCheckingProvenance={isCheckingProvenance ?? false}
+            provenanceResult={provenanceResultDetail}
+            provenanceError={provenanceError}
           />
         )}
         {activeTool === 'compress' && (
