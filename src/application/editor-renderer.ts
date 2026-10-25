@@ -143,6 +143,40 @@ function applyMosaic(context: CanvasRenderingContext2D | OffscreenCanvasRenderin
   context.restore()
 }
 
+function applyBlurRegion(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  factory: CanvasFactory,
+  rect: Rect,
+  state: EditorState,
+  outputWidth: number,
+  outputHeight: number,
+  scale: number,
+  showFullSource: boolean,
+  blurRadiusPx: number = 12
+): void {
+  const outRect = toOutputRect(rect, state, outputWidth, outputHeight, scale, showFullSource)
+  const blurRadius = Math.max(2, Math.round(blurRadiusPx * scale))
+  const pad = blurRadius * 2
+  const x = Math.max(0, Math.floor(outRect.x - pad))
+  const y = Math.max(0, Math.floor(outRect.y - pad))
+  const width = Math.min(outputWidth - x, Math.ceil(outRect.x + outRect.width + pad) - x)
+  const height = Math.min(outputHeight - y, Math.ceil(outRect.y + outRect.height + pad) - y)
+  if (width < 1 || height < 1) return
+
+  const blurLayer = factory.create(width, height)
+  const blurCtx = blurLayer.getContext('2d')
+  if (!blurCtx) return
+
+  blurCtx.drawImage?.(context.canvas as never, x, y, width, height, 0, 0, width, height)
+  context.save?.()
+  context.beginPath?.()
+  traceTransformedRect(context, rect, state, outputWidth, outputHeight, scale, showFullSource)
+  context.clip?.()
+  context.filter = `blur(${blurRadius}px)`
+  context.drawImage?.(blurLayer as never, 0, 0, width, height, x, y, width, height)
+  context.restore?.()
+}
+
 function traceTransformedRect(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, rect: Rect, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
   const points = transformedRectPoints(rect, state, outputWidth, outputHeight, scale, showFullSource)
   for (const index of [0, 1, 3, 2]) {
@@ -328,27 +362,16 @@ function drawAnnotations(
         context.stroke?.()
       } else if (layer.type === 'mosaic') {
         if (!layer.rect) continue
-        const dummyLocal: LocalAdjustment = {
-          id: layer.id,
-          rect: layer.rect,
-          adjustments: { brightness: 0, contrast: 0, saturation: 0, sharpen: 0, blur: layer.mosaicType === 'blur' ? 12 : 0 },
-          mosaicBlockSize: layer.mosaicType === 'blur' ? undefined : (layer.mosaicBlockSize || 16),
-        }
-        if (dummyLocal.mosaicBlockSize) {
-          applyMosaic(context, factory, dummyLocal, state, outputWidth, outputHeight, scale, showFullSource)
+        if (layer.mosaicType === 'blur') {
+          applyBlurRegion(context, factory, layer.rect, state, outputWidth, outputHeight, scale, showFullSource, 12)
         } else {
-          const blurLayer = factory.create(outputWidth, outputHeight)
-          const blurCtx = blurLayer.getContext('2d')
-          if (blurCtx) {
-            blurCtx.drawImage?.(context.canvas as never, 0, 0)
-            context.save?.()
-            context.beginPath?.()
-            traceTransformedRect(context, layer.rect, state, outputWidth, outputHeight, scale, showFullSource)
-            context.clip?.()
-            context.filter = 'blur(12px)'
-            context.drawImage?.(blurLayer as never, 0, 0)
-            context.restore?.()
+          const dummyLocal: LocalAdjustment = {
+            id: layer.id,
+            rect: layer.rect,
+            adjustments: { brightness: 0, contrast: 0, saturation: 0, sharpen: 0, blur: 0 },
+            mosaicBlockSize: layer.mosaicBlockSize || 16,
           }
+          applyMosaic(context, factory, dummyLocal, state, outputWidth, outputHeight, scale, showFullSource)
         }
       } else if (layer.type === 'text') {
         if (!layer.text) continue

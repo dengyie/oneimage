@@ -110,4 +110,108 @@ describe('editor renderer', () => {
     expect(paths[0]).toEqual([{ x: 20, y: 30 }, { x: 60, y: 30 }, { x: 60, y: 60 }, { x: 20, y: 60 }])
     expect(paths[1]).toEqual(paths[0])
   })
+
+  it('allocates bounded scratch canvas for blur mosaic rather than full-frame', () => {
+    const created: Array<{ width: number; height: number }> = []
+    const factory: CanvasFactory = {
+      create(width, height) {
+        created.push({ width, height })
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          clearRect: () => {},
+          save: () => {},
+          restore: () => {},
+          beginPath: () => {},
+          rect: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          closePath: () => {},
+          clip: () => {},
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          drawImage: () => {},
+          set filter(_value: string) {},
+        }
+        return { width, height, getContext: () => context as never }
+      },
+    }
+    const source: DecodedSource = { width: 1000, height: 1000, draw: () => {}, close: () => {} }
+    const state = createEditorState(1000, 1000)
+    // 100x100 blur region inside 1000x1000 canvas
+    state.annotations = [
+      {
+        id: 'blur-1',
+        type: 'mosaic',
+        mosaicType: 'blur',
+        color: '#000000',
+        strokeWidth: 0,
+        rect: { x: 200, y: 200, width: 100, height: 100 },
+      },
+    ]
+
+    renderEditor(source, state, factory, { maxEdge: 1000, showFullSource: true })
+
+    // Expect the main canvas (1000x1000), then the blur scratch canvas bounded to ~148x148 (not 1000x1000)
+    expect(created[0]).toEqual({ width: 1000, height: 1000 })
+    expect(created[1].width).toBeLessThan(200)
+    expect(created[1].height).toBeLessThan(200)
+    expect(created[1].width).toBeGreaterThanOrEqual(100)
+    expect(created[1].height).toBeGreaterThanOrEqual(100)
+  })
+
+  it('renders vector annotations across all supported primitives without throwing', () => {
+    const renderedPrimitives: string[] = []
+    const factory: CanvasFactory = {
+      create(width, height) {
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          clearRect: () => {},
+          save: () => {},
+          restore: () => {},
+          beginPath: () => {},
+          rect: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          quadraticCurveTo: () => { renderedPrimitives.push('quadraticCurve') },
+          arc: () => { renderedPrimitives.push('arc') },
+          ellipse: () => { renderedPrimitives.push('ellipse') },
+          closePath: () => {},
+          clip: () => {},
+          stroke: () => { renderedPrimitives.push('stroke') },
+          fill: () => { renderedPrimitives.push('fill') },
+          fillText: () => { renderedPrimitives.push('fillText') },
+          measureText: () => ({ width: 60 }),
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          drawImage: () => {},
+          set filter(_value: string) {},
+          set strokeStyle(_value: string) {},
+          set fillStyle(_value: string) {},
+          set lineWidth(_value: number) {},
+        }
+        return { width, height, getContext: () => context as never }
+      },
+    }
+    const source: DecodedSource = { width: 500, height: 500, draw: () => {}, close: () => {} }
+    const state = createEditorState(500, 500)
+    state.annotations = [
+      { id: '1', type: 'brush', color: '#ef4444', strokeWidth: 4, points: [{ x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 15 }] },
+      { id: '2', type: 'arrow', color: '#ef4444', strokeWidth: 4, points: [{ x: 50, y: 50 }, { x: 100, y: 100 }] },
+      { id: '3', type: 'rect', color: '#ef4444', strokeWidth: 4, rect: { x: 50, y: 50, width: 80, height: 60 } },
+      { id: '4', type: 'ellipse', color: '#ef4444', strokeWidth: 4, rect: { x: 150, y: 150, width: 80, height: 60 } },
+      { id: '5', type: 'text', color: '#ef4444', strokeWidth: 4, text: 'Hello', rect: { x: 200, y: 200, width: 60, height: 30 }, textBgStyle: 'solid' },
+    ]
+
+    renderEditor(source, state, factory, { maxEdge: 500, showFullSource: true })
+
+    expect(renderedPrimitives).toContain('quadraticCurve')
+    expect(renderedPrimitives).toContain('stroke')
+    expect(renderedPrimitives).toContain('fill')
+    expect(renderedPrimitives).toContain('ellipse')
+    expect(renderedPrimitives).toContain('fillText')
+  })
 })
