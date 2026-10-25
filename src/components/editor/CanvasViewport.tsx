@@ -1,0 +1,681 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import type { EditorState, Rect, AnnotationLayer } from '../../domain/editor-state'
+import { createEditorState, clampCrop, rotatedDimensions } from '../../domain/editor-state'
+import { renderEditor, schedulePreview, type DecodedSource } from '../../application/editor-renderer'
+import { createBrowserCanvasFactory } from '../../infrastructure/editor-canvas'
+import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, type CropHandle, type CropGesture } from '../image-editor-model'
+import type { ActiveTool } from './BottomDock'
+import type { MarkupMode } from './SubToolbars/MarkupSubToolbar'
+import type { MosaicType } from './SubToolbars/MosaicSubToolbar'
+import type { TextBgStyle } from '../../domain/editor-state'
+
+interface CanvasViewportProps {
+  source: DecodedSource | null
+  state: EditorState
+  activeTool: ActiveTool
+  markupMode: MarkupMode
+  markupColor: string
+  markupWidth: number
+  mosaicType: MosaicType
+  mosaicBlockSize: number
+  textStyle: TextBgStyle
+  textColor: string
+  textSize: number
+  isComparingOriginal: boolean
+  zoomScale: number
+  panOffset: { x: number; y: number }
+  onZoomChange: (scale: number) => void
+  onPanChange: (offset: { x: number; y: number }) => void
+  onStateChange: (state: EditorState) => void
+  onCommitHistory: (state: EditorState) => void
+}
+
+export const CanvasViewport: React.FC<CanvasViewportProps> = ({
+  source,
+  state,
+  activeTool,
+  markupMode,
+  markupColor,
+  markupWidth,
+  mosaicType,
+  mosaicBlockSize,
+  textStyle,
+  textColor,
+  textSize,
+  isComparingOriginal,
+  zoomScale,
+  panOffset,
+  onZoomChange,
+  onPanChange,
+  onStateChange,
+  onCommitHistory,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const overlaySvgRef = useRef<SVGSVGElement>(null)
+
+  interface DrawingStroke {
+    mode: MarkupMode | 'mosaic'
+    points: Array<{ x: number; y: number }>
+    canvasPoints: Array<{ x: number; y: number }>
+    rect?: Rect
+    canvasRect?: Rect
+  }
+
+  // Ephemeral active drawing state
+  const [currentStroke, setCurrentStroke] = useState<DrawingStroke | null>(null)
+  const currentStrokeRef = useRef<DrawingStroke | null>(null)
+
+  // Active inline text input
+  const [activeTextInput, setActiveTextInput] = useState<{
+    x: number
+    y: number
+    screenX: number
+    screenY: number
+    text: string
+  } | null>(null)
+
+  // Active crop gesture
+  const cropGestureRef = useRef<CropGesture | null>(null)
+
+  // Panning drag state
+  const isPanningRef = useRef(false)
+  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 })
+  const isSpaceDownRef = useRef(false)
+
+  // Canvas factory
+  const factory = useRef(createBrowserCanvasFactory()).current
+
+  // Render canvas pipeline
+  useEffect(() => {
+    if (!source || !canvasRef.current) return
+    const canvas = canvasRef.current
+
+    // If comparing original, render pristine source
+    const effectiveState = isComparingOriginal
+      ? createEditorState(source.width, source.height)
+      : state
+
+    const cancel = schedulePreview(async () => {
+      try {
+        const rendered = renderEditor(source, effectiveState, factory, {
+          maxEdge: 2400,
+          showFullSource: activeTool === 'crop',
+        })
+        canvas.width = rendered.width
+        canvas.height = rendered.height
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.clearRect(0, 0, rendered.width, rendered.height)
+          ctx.drawImage(rendered.canvas as CanvasImageSource, 0, 0)
+        }
+      } catch (err) {
+        if ((err as Error)?.name !== 'AbortError') {
+          console.error('Canvas render error:', err)
+        }
+      }
+    })
+
+    return cancel
+  }, [source, state, activeTool, isComparingOriginal, factory])
+
+  // Space key tracking for Pan
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        isSpaceDownRef.current = true
+        if (containerRef.current) containerRef.current.style.cursor = 'grab'
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        isSpaceDownRef.current = false
+        if (containerRef.current) containerRef.current.style.cursor = ''
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [])
+
+  // Mouse wheel zoom (cursor-centered)
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!containerRef.current) return
+
+      const rect = containerRef.current.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+
+      const factor = e.deltaY < 0 ? 1.15 : 0.87
+      const newScale = Math.min(32, Math.max(0.05, zoomScale * factor))
+
+      // Keep mouse pointer centered
+      const newPanX = mouseX - (mouseX - panOffset.x) * (newScale / zoomScale)
+      const newPanY = mouseY - (mouseY - panOffset.y) * (newScale / zoomScale)
+
+      onZoomChange(newScale)
+      onPanChange({ x: newPanX, y: newPanY })
+    },
+    [zoomScale, panOffset, onZoomChange, onPanChange]
+  )
+
+  // Convert screen coordinates to canvas-local coordinates (0 to canvas.width, 0 to canvas.height)
+  const getCanvasLocalCoord = useCallback((clientX: number, clientY: number) => {
+    if (!canvasRef.current) return { x: 0, y: 0 }
+    const canvasRect = canvasRef.current.getBoundingClientRect()
+    return {
+      x: Math.max(0, Math.min(canvasRef.current.width, (clientX - canvasRect.left) / zoomScale)),
+      y: Math.max(0, Math.min(canvasRef.current.height, (clientY - canvasRect.top) / zoomScale)),
+    }
+  }, [zoomScale])
+
+  // Convert screen coordinates to intrinsic source image coordinates
+  const getPointerSourceCoord = useCallback((clientX: number, clientY: number) => {
+    if (!canvasRef.current || !source) return { x: 0, y: 0 }
+    const local = getCanvasLocalCoord(clientX, clientY)
+    const isCropMode = activeTool === 'crop'
+    const baseW = isCropMode ? source.width : state.crop.width
+    const baseH = isCropMode ? source.height : state.crop.height
+    const rotated = rotatedDimensions(baseW, baseH, state.rotation)
+    const scaleFactorX = rotated.width / (canvasRef.current.width || 1)
+    const scaleFactorY = rotated.height / (canvasRef.current.height || 1)
+    const vpX = local.x * scaleFactorX
+    const vpY = local.y * scaleFactorY
+    const mapped = mapPointerToSource(
+      { x: vpX, y: vpY },
+      { width: baseW, height: baseH },
+      state.rotation,
+      state.flipX,
+      state.flipY
+    )
+    if (isCropMode) {
+      return mapped
+    }
+    return {
+      x: mapped.x + state.crop.x,
+      y: mapped.y + state.crop.y,
+    }
+  }, [source, state, activeTool, getCanvasLocalCoord])
+
+  // Pointer Down handling
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!source || !canvasRef.current || !containerRef.current) return
+
+    // Middle button or Space held -> Pan
+    if (e.button === 1 || isSpaceDownRef.current || activeTool === 'none') {
+      isPanningRef.current = true
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX: panOffset.x,
+        panY: panOffset.y,
+      }
+      containerRef.current.style.cursor = 'grabbing'
+      return
+    }
+
+    // Right click -> Ignore
+    if (e.button !== 0) return
+
+    const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
+    const localPt = getCanvasLocalCoord(e.clientX, e.clientY)
+
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // ignore
+    }
+
+    if (activeTool === 'markup') {
+      const stroke: DrawingStroke = {
+        mode: markupMode,
+        points: [sourcePt],
+        canvasPoints: [localPt],
+        rect: { x: sourcePt.x, y: sourcePt.y, width: 0, height: 0 },
+        canvasRect: { x: localPt.x, y: localPt.y, width: 0, height: 0 },
+      }
+      currentStrokeRef.current = stroke
+      setCurrentStroke(stroke)
+    } else if (activeTool === 'mosaic') {
+      const stroke: DrawingStroke = {
+        mode: 'mosaic' as const,
+        points: [sourcePt],
+        canvasPoints: [localPt],
+        rect: { x: sourcePt.x, y: sourcePt.y, width: 0, height: 0 },
+        canvasRect: { x: localPt.x, y: localPt.y, width: 0, height: 0 },
+      }
+      currentStrokeRef.current = stroke
+      setCurrentStroke(stroke)
+    } else if (activeTool === 'text') {
+      setActiveTextInput({
+        x: sourcePt.x,
+        y: sourcePt.y,
+        screenX: e.clientX,
+        screenY: e.clientY,
+        text: '',
+      })
+    }
+  }
+
+  // Pointer Move handling
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!source || !canvasRef.current) return
+
+    if (isPanningRef.current) {
+      const dx = e.clientX - panStartRef.current.x
+      const dy = e.clientY - panStartRef.current.y
+      onPanChange({
+        x: panStartRef.current.panX + dx,
+        y: panStartRef.current.panY + dy,
+      })
+      return
+    }
+
+    // Crop dragging
+    if (cropGestureRef.current) {
+      const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
+      const nextCrop = updateCropGesture(cropGestureRef.current, sourcePt)
+      onStateChange({ ...state, crop: nextCrop })
+      return
+    }
+
+    // Active drawing stroke
+    if (currentStrokeRef.current) {
+      const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
+      const localPt = getCanvasLocalCoord(e.clientX, e.clientY)
+
+      if (currentStrokeRef.current.mode === 'brush' || currentStrokeRef.current.mode === 'highlighter') {
+        const nextPoints = [...currentStrokeRef.current.points, sourcePt]
+        const nextCanvasPoints = [...currentStrokeRef.current.canvasPoints, localPt]
+        const updated: DrawingStroke = {
+          ...currentStrokeRef.current,
+          points: nextPoints,
+          canvasPoints: nextCanvasPoints,
+        }
+        currentStrokeRef.current = updated
+        setCurrentStroke(updated)
+      } else {
+        // Shapes, arrow, or mosaic
+        const p0 = currentStrokeRef.current.points[0]
+        const cp0 = currentStrokeRef.current.canvasPoints[0]
+        const minX = Math.min(p0.x, sourcePt.x)
+        const minY = Math.min(p0.y, sourcePt.y)
+        const w = Math.abs(sourcePt.x - p0.x)
+        const h = Math.abs(sourcePt.y - p0.y)
+        const minCpX = Math.min(cp0.x, localPt.x)
+        const minCpY = Math.min(cp0.y, localPt.y)
+        const cpW = Math.abs(localPt.x - cp0.x)
+        const cpH = Math.abs(localPt.y - cp0.y)
+        const updated: DrawingStroke = {
+          ...currentStrokeRef.current,
+          points: [p0, sourcePt],
+          canvasPoints: [cp0, localPt],
+          rect: { x: minX, y: minY, width: w, height: h },
+          canvasRect: { x: minCpX, y: minCpY, width: cpW, height: cpH },
+        }
+        currentStrokeRef.current = updated
+        setCurrentStroke(updated)
+      }
+    }
+  }
+
+  // Pointer Up handling
+  const handlePointerUp = (e?: React.PointerEvent) => {
+    if (e) {
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {
+        // ignore
+      }
+    }
+
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      if (containerRef.current) {
+        containerRef.current.style.cursor = isSpaceDownRef.current ? 'grab' : ''
+      }
+    }
+
+    if (cropGestureRef.current) {
+      cropGestureRef.current = null
+      onCommitHistory(state)
+      return
+    }
+
+    const stroke = currentStrokeRef.current || currentStroke
+    if (stroke) {
+      currentStrokeRef.current = null
+      setCurrentStroke(null)
+
+      let newLayer: AnnotationLayer | null = null
+      const id = `annot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+      if (stroke.mode === 'brush' || stroke.mode === 'highlighter') {
+        if (stroke.points.length > 0) {
+          newLayer = {
+            id,
+            type: stroke.mode,
+            points: stroke.points,
+            color: markupColor,
+            strokeWidth: markupWidth,
+            opacity: stroke.mode === 'highlighter' ? 0.45 : 1.0,
+          }
+        }
+      } else if (stroke.mode === 'arrow') {
+        if (stroke.points.length >= 2) {
+          newLayer = {
+            id,
+            type: 'arrow',
+            points: stroke.points,
+            color: markupColor,
+            strokeWidth: markupWidth,
+          }
+        }
+      } else if (stroke.mode === 'rect' || stroke.mode === 'ellipse') {
+        if (stroke.rect && stroke.rect.width > 3 && stroke.rect.height > 3) {
+          newLayer = {
+            id,
+            type: stroke.mode,
+            rect: stroke.rect,
+            color: markupColor,
+            strokeWidth: markupWidth,
+          }
+        }
+      } else if (stroke.mode === 'mosaic') {
+        if (stroke.rect && stroke.rect.width > 4 && stroke.rect.height > 4) {
+          newLayer = {
+            id,
+            type: 'mosaic',
+            rect: stroke.rect,
+            color: '#000000',
+            strokeWidth: 1,
+            mosaicType,
+            mosaicBlockSize,
+          }
+        }
+      }
+
+      if (newLayer) {
+        const nextState: EditorState = {
+          ...state,
+          annotations: [...(state.annotations || []), newLayer],
+        }
+        onStateChange(nextState)
+        onCommitHistory(nextState)
+      }
+    }
+  }
+
+  // Start Crop Handle Gesture
+  const handleCropHandleDown = (handle: CropHandle, e: React.PointerEvent) => {
+    e.stopPropagation()
+    if (!source || !canvasRef.current) return
+    const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
+    cropGestureRef.current = createCropGesture(
+      handle,
+      sourcePt,
+      state.crop,
+      { x: 0, y: 0, width: source.width, height: source.height },
+      state.aspectRatio
+    )
+  }
+
+  // Double click toggles Fit / 100%
+  const handleDoubleClick = () => {
+    if (Math.abs(zoomScale - 1.0) < 0.1) {
+      onZoomChange(0.5) // Fit
+    } else {
+      onZoomChange(1.0) // 100%
+    }
+  }
+
+  // Commit text input
+  const handleCommitText = () => {
+    if (activeTextInput && activeTextInput.text.trim()) {
+      const id = `text_${Date.now()}`
+      const newLayer: AnnotationLayer = {
+        id,
+        type: 'text',
+        rect: {
+          x: activeTextInput.x,
+          y: activeTextInput.y,
+          width: 100,
+          height: textSize,
+        },
+        text: activeTextInput.text.trim(),
+        color: textColor,
+        fontSize: textSize,
+        textBgStyle: textStyle,
+        strokeWidth: 1,
+      }
+      const nextState: EditorState = {
+        ...state,
+        annotations: [...(state.annotations || []), newLayer],
+      }
+      onStateChange(nextState)
+      onCommitHistory(nextState)
+    }
+    setActiveTextInput(null)
+  }
+
+  // Viewport crop rect calculation (for handle overlays)
+  const rotatedDim = source ? rotatedDimensions(source.width, source.height, state.rotation) : null
+  const canvasWidth = canvasRef.current?.width || 0
+  const canvasHeight = canvasRef.current?.height || 0
+  const cropScale = (source && activeTool === 'crop' && rotatedDim && canvasWidth > 0)
+    ? canvasWidth / rotatedDim.width
+    : 1
+
+  const viewportCrop = source && activeTool === 'crop'
+    ? mapSourceRectToViewport(
+        state.crop,
+        { width: source.width, height: source.height },
+        state.rotation,
+        state.flipX,
+        state.flipY
+      )
+    : null
+
+  const displayCrop = viewportCrop
+    ? {
+        x: viewportCrop.x * cropScale,
+        y: viewportCrop.y * cropScale,
+        width: viewportCrop.width * cropScale,
+        height: viewportCrop.height * cropScale,
+      }
+    : null
+
+  return (
+    <div
+      ref={containerRef}
+      onWheel={handleWheel}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onDoubleClick={handleDoubleClick}
+      className={`relative w-full h-full overflow-hidden select-none touch-none flex items-center justify-center ${
+        activeTool === 'none' || isSpaceDownRef.current ? 'cursor-grab' : 'cursor-crosshair'
+      }`}
+    >
+      {/* Transformed spatial viewport container */}
+      <div
+        style={{
+          transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
+          transformOrigin: 'center center',
+          transition: isPanningRef.current ? 'none' : 'transform 0.05s linear',
+        }}
+        className="relative flex items-center justify-center shadow-2xl shadow-black/90"
+      >
+        {/* Alpha checkerboard backdrop under image */}
+        <div className="absolute inset-0 bg-checkerboard rounded-sm" />
+
+        {/* Master rendered canvas */}
+        <canvas ref={canvasRef} className="block relative z-10 max-w-none" />
+
+        {/* Ephemeral in-flight drawing stroke overlay */}
+        {currentStroke && (
+          <svg
+            ref={overlaySvgRef}
+            className="absolute inset-0 z-20 pointer-events-none w-full h-full"
+            style={{ width: canvasWidth, height: canvasHeight }}
+          >
+            {(currentStroke.mode === 'brush' || currentStroke.mode === 'highlighter') && (
+              <polyline
+                points={(currentStroke.canvasPoints || currentStroke.points).map((p) => `${p.x},${p.y}`).join(' ')}
+                fill="none"
+                stroke={markupColor}
+                strokeWidth={markupWidth}
+                strokeLinecap={currentStroke.mode === 'highlighter' ? 'square' : 'round'}
+                strokeLinejoin="round"
+                opacity={currentStroke.mode === 'highlighter' ? 0.45 : 1.0}
+              />
+            )}
+            {currentStroke.mode === 'arrow' && (currentStroke.canvasPoints || currentStroke.points).length >= 2 && (
+              <line
+                x1={(currentStroke.canvasPoints || currentStroke.points)[0].x}
+                y1={(currentStroke.canvasPoints || currentStroke.points)[0].y}
+                x2={(currentStroke.canvasPoints || currentStroke.points)[1].x}
+                y2={(currentStroke.canvasPoints || currentStroke.points)[1].y}
+                stroke={markupColor}
+                strokeWidth={markupWidth}
+                strokeLinecap="round"
+              />
+            )}
+            {currentStroke.mode === 'rect' && (currentStroke.canvasRect || currentStroke.rect) && (
+              <rect
+                x={(currentStroke.canvasRect || currentStroke.rect)!.x}
+                y={(currentStroke.canvasRect || currentStroke.rect)!.y}
+                width={(currentStroke.canvasRect || currentStroke.rect)!.width}
+                height={(currentStroke.canvasRect || currentStroke.rect)!.height}
+                fill="none"
+                stroke={markupColor}
+                strokeWidth={markupWidth}
+              />
+            )}
+            {currentStroke.mode === 'ellipse' && (currentStroke.canvasRect || currentStroke.rect) && (
+              <ellipse
+                cx={(currentStroke.canvasRect || currentStroke.rect)!.x + (currentStroke.canvasRect || currentStroke.rect)!.width / 2}
+                cy={(currentStroke.canvasRect || currentStroke.rect)!.y + (currentStroke.canvasRect || currentStroke.rect)!.height / 2}
+                rx={(currentStroke.canvasRect || currentStroke.rect)!.width / 2}
+                ry={(currentStroke.canvasRect || currentStroke.rect)!.height / 2}
+                fill="none"
+                stroke={markupColor}
+                strokeWidth={markupWidth}
+              />
+            )}
+            {currentStroke.mode === 'mosaic' && (currentStroke.canvasRect || currentStroke.rect) && (
+              <rect
+                x={(currentStroke.canvasRect || currentStroke.rect)!.x}
+                y={(currentStroke.canvasRect || currentStroke.rect)!.y}
+                width={(currentStroke.canvasRect || currentStroke.rect)!.width}
+                height={(currentStroke.canvasRect || currentStroke.rect)!.height}
+                fill="rgba(255, 255, 255, 0.2)"
+                stroke="#22c55e"
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+              />
+            )}
+          </svg>
+        )}
+
+        {/* Interactive Crop Handles Overlay */}
+        {activeTool === 'crop' && displayCrop && (
+          <div
+            style={{
+              left: `${displayCrop.x}px`,
+              top: `${displayCrop.y}px`,
+              width: `${displayCrop.width}px`,
+              height: `${displayCrop.height}px`,
+            }}
+            className="absolute z-30 border-2 border-emerald-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.65)] pointer-events-none"
+          >
+            {/* Rule-of-thirds grid lines */}
+            <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-40">
+              <div className="border-r border-b border-emerald-300/40" />
+              <div className="border-r border-b border-emerald-300/40" />
+              <div className="border-b border-emerald-300/40" />
+              <div className="border-r border-b border-emerald-300/40" />
+              <div className="border-r border-b border-emerald-300/40" />
+              <div className="border-b border-emerald-300/40" />
+              <div className="border-r border-emerald-300/40" />
+              <div className="border-r border-emerald-300/40" />
+              <div />
+            </div>
+
+            {/* Move area */}
+            <div
+              onPointerDown={(e) => handleCropHandleDown('move', e)}
+              className="absolute inset-0 cursor-move pointer-events-auto"
+            />
+
+            {/* 8 Corner & Edge Handles */}
+            {(['nw', 'ne', 'sw', 'se', 'n', 's', 'w', 'e'] as CropHandle[]).map((handle) => {
+              const handlePosStyle =
+                handle === 'nw'
+                  ? 'top-[-8px] left-[-8px] cursor-nwse-resize'
+                  : handle === 'ne'
+                  ? 'top-[-8px] right-[-8px] cursor-nesw-resize'
+                  : handle === 'sw'
+                  ? 'bottom-[-8px] left-[-8px] cursor-nesw-resize'
+                  : handle === 'se'
+                  ? 'bottom-[-8px] right-[-8px] cursor-nwse-resize'
+                  : handle === 'n'
+                  ? 'top-[-8px] left-1/2 -translate-x-1/2 cursor-ns-resize'
+                  : handle === 's'
+                  ? 'bottom-[-8px] left-1/2 -translate-x-1/2 cursor-ns-resize'
+                  : handle === 'w'
+                  ? 'left-[-8px] top-1/2 -translate-y-1/2 cursor-ew-resize'
+                  : 'right-[-8px] top-1/2 -translate-y-1/2 cursor-ew-resize'
+
+              return (
+                <div
+                  key={handle}
+                  onPointerDown={(e) => handleCropHandleDown(handle, e)}
+                  className={`absolute w-4 h-4 bg-emerald-400 rounded-full border-2 border-zinc-950 pointer-events-auto shadow-md ${handlePosStyle}`}
+                />
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Floating inline text input on canvas */}
+      {activeTextInput && (
+        <div
+          style={{
+            left: `${activeTextInput.screenX}px`,
+            top: `${activeTextInput.screenY}px`,
+          }}
+          className="fixed z-50 -translate-y-1/2 flex items-center gap-1.5 p-1 rounded-xl bg-zinc-900/95 backdrop-blur-2xl border border-zinc-700 shadow-2xl"
+        >
+          <input
+            autoFocus
+            type="text"
+            placeholder="输入文字..."
+            value={activeTextInput.text}
+            onChange={(e) =>
+              setActiveTextInput((prev) => (prev ? { ...prev, text: e.target.value } : null))
+            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleCommitText()
+              if (e.key === 'Escape') setActiveTextInput(null)
+            }}
+            className="px-2.5 py-1 text-sm bg-zinc-800 text-zinc-100 rounded-lg border border-zinc-700 outline-none focus:border-emerald-500 w-44"
+          />
+          <button
+            onClick={handleCommitText}
+            className="px-2.5 py-1 text-xs bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-medium rounded-lg"
+          >
+            完成
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,210 @@
+import React from 'react'
+import { UiIcon, type UiIconName } from '../ui/UiIcon'
+import { CropSubToolbar } from './SubToolbars/CropSubToolbar'
+import { MarkupSubToolbar, type MarkupMode } from './SubToolbars/MarkupSubToolbar'
+import { MosaicSubToolbar, type MosaicType } from './SubToolbars/MosaicSubToolbar'
+import { TextSubToolbar } from './SubToolbars/TextSubToolbar'
+import { AdjustSubToolbar } from './SubToolbars/AdjustSubToolbar'
+import { CompressSubToolbar } from './SubToolbars/CompressSubToolbar'
+import type { Adjustments, TextBgStyle } from '../../domain/editor-state'
+
+export type ActiveTool = 'none' | 'crop' | 'markup' | 'mosaic' | 'text' | 'adjust' | 'compress'
+
+interface BottomDockProps {
+  activeTool: ActiveTool
+  onToolSelect: (tool: ActiveTool) => void
+
+  // Crop props
+  cropRatio: string
+  onRatioSelect: (ratio: string) => void
+  onRotate90: () => void
+  onFlipH: () => void
+  onFlipV: () => void
+  onResetCrop: () => void
+
+  // Markup props
+  markupMode: MarkupMode
+  markupColor: string
+  markupWidth: number
+  onMarkupModeSelect: (mode: MarkupMode) => void
+  onMarkupColorSelect: (color: string) => void
+  onMarkupWidthSelect: (width: number) => void
+
+  // Mosaic props
+  mosaicType: MosaicType
+  mosaicBlockSize: number
+  onMosaicTypeSelect: (type: MosaicType) => void
+  onMosaicBlockSizeSelect: (size: number) => void
+
+  // Text props
+  textStyle: TextBgStyle
+  textColor: string
+  textSize: number
+  onTextStyleSelect: (style: TextBgStyle) => void
+  onTextColorSelect: (color: string) => void
+  onTextSizeSelect: (size: number) => void
+
+  // Adjust props
+  adjustments: Adjustments
+  onAdjustmentsChange: (adjustments: Adjustments) => void
+  onAdjustmentsReset: () => void
+
+  // Compress props
+  outputMime: string
+  quality: number
+  estimatedBytes: number | null
+  originalBytes: number
+  stripMetadata: boolean
+  isCheckingProvenance?: boolean
+  provenanceResult?: { detected: boolean; note?: string } | null
+  onMimeSelect: (mime: string) => void
+  onQualityChange: (quality: number) => void
+  onToggleStripMetadata: () => void
+  onCheckProvenance: () => void
+}
+
+const TOOLS: Array<{ id: ActiveTool; label: string; shortcut: string; icon: UiIconName }> = [
+  { id: 'crop', label: '裁剪', shortcut: 'C', icon: 'crop' },
+  { id: 'markup', label: '标注', shortcut: 'B', icon: 'brush' },
+  { id: 'mosaic', label: '马赛克', shortcut: 'M', icon: 'mosaic' },
+  { id: 'text', label: '文字', shortcut: 'T', icon: 'type' },
+  { id: 'adjust', label: '滤镜调色', shortcut: 'F', icon: 'sliders' },
+  { id: 'compress', label: '压缩格式', shortcut: 'O', icon: 'sparkles' },
+]
+
+export const BottomDock: React.FC<BottomDockProps> = ({
+  activeTool,
+  onToolSelect,
+  cropRatio,
+  onRatioSelect,
+  onRotate90,
+  onFlipH,
+  onFlipV,
+  onResetCrop,
+  markupMode,
+  markupColor,
+  markupWidth,
+  onMarkupModeSelect,
+  onMarkupColorSelect,
+  onMarkupWidthSelect,
+  mosaicType,
+  mosaicBlockSize,
+  onMosaicTypeSelect,
+  onMosaicBlockSizeSelect,
+  textStyle,
+  textColor,
+  textSize,
+  onTextStyleSelect,
+  onTextColorSelect,
+  onTextSizeSelect,
+  adjustments,
+  onAdjustmentsChange,
+  onAdjustmentsReset,
+  outputMime,
+  quality,
+  estimatedBytes,
+  originalBytes,
+  stripMetadata,
+  isCheckingProvenance,
+  provenanceResult,
+  onMimeSelect,
+  onQualityChange,
+  onToggleStripMetadata,
+  onCheckProvenance,
+}) => {
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 select-none pointer-events-none">
+      {/* Contextual Sub-Toolbar (Floating directly above the dock) */}
+      <div className="pointer-events-auto transition-all duration-200">
+        {activeTool === 'crop' && (
+          <CropSubToolbar
+            currentRatio={cropRatio}
+            onRatioSelect={onRatioSelect}
+            onRotate90={onRotate90}
+            onFlipH={onFlipH}
+            onFlipV={onFlipV}
+            onResetCrop={onResetCrop}
+          />
+        )}
+        {activeTool === 'markup' && (
+          <MarkupSubToolbar
+            currentMode={markupMode}
+            currentColor={markupColor}
+            currentWidth={markupWidth}
+            onModeSelect={onMarkupModeSelect}
+            onColorSelect={onMarkupColorSelect}
+            onWidthSelect={onMarkupWidthSelect}
+          />
+        )}
+        {activeTool === 'mosaic' && (
+          <MosaicSubToolbar
+            currentType={mosaicType}
+            currentBlockSize={mosaicBlockSize}
+            onTypeSelect={onMosaicTypeSelect}
+            onBlockSizeSelect={onMosaicBlockSizeSelect}
+          />
+        )}
+        {activeTool === 'text' && (
+          <TextSubToolbar
+            currentStyle={textStyle}
+            currentColor={textColor}
+            currentSize={textSize}
+            onStyleSelect={onTextStyleSelect}
+            onColorSelect={onTextColorSelect}
+            onSizeSelect={onTextSizeSelect}
+          />
+        )}
+        {activeTool === 'adjust' && (
+          <AdjustSubToolbar
+            adjustments={adjustments}
+            onChange={onAdjustmentsChange}
+            onReset={onAdjustmentsReset}
+          />
+        )}
+        {activeTool === 'compress' && (
+          <CompressSubToolbar
+            currentMime={outputMime}
+            quality={quality}
+            estimatedBytes={estimatedBytes}
+            originalBytes={originalBytes}
+            stripMetadata={stripMetadata}
+            isCheckingProvenance={isCheckingProvenance}
+            provenanceResult={provenanceResult}
+            onMimeSelect={onMimeSelect}
+            onQualityChange={onQualityChange}
+            onToggleStripMetadata={onToggleStripMetadata}
+            onCheckProvenance={onCheckProvenance}
+          />
+        )}
+      </div>
+
+      {/* Main WeChat / QQ Style Capsule Dock */}
+      <nav className="pointer-events-auto flex items-center gap-1 sm:gap-2 px-3 py-2 rounded-full bg-zinc-900/85 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/80 text-xs text-zinc-300">
+        {TOOLS.map((t) => {
+          const isActive = activeTool === t.id
+          return (
+            <button
+              key={t.id}
+              onClick={() => onToolSelect(isActive ? 'none' : t.id)}
+              className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-xs ${
+                isActive
+                  ? 'bg-emerald-500 text-zinc-950 font-medium shadow-lg shadow-emerald-500/30 scale-105'
+                  : 'hover:bg-zinc-800/80 text-zinc-400 hover:text-zinc-100'
+              }`}
+            >
+              <UiIcon name={t.icon} size={16} strokeWidth={isActive ? 2.2 : 1.8} />
+              <span className="font-medium">{t.label}</span>
+              <kbd
+                className={`hidden sm:inline-block text-[10px] font-mono px-1 rounded transition-colors ${
+                  isActive ? 'bg-zinc-950/20 text-zinc-950' : 'text-zinc-500 group-hover:text-zinc-400'
+                }`}
+              >
+                {t.shortcut}
+              </kbd>
+            </button>
+          )
+        })}
+      </nav>
+    </div>
+  )
+}

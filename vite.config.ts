@@ -1,12 +1,13 @@
 import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const apiTarget = `http://127.0.0.1:${process.env.PORT ?? '8787'}`
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   cacheDir: join(tmpdir(), 'oneimage-vite-cache'),
   server: {
     proxy: {

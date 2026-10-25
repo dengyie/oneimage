@@ -1,216 +1,580 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { validateImageFile } from './application/file-policy'
-import { runLocalTool } from './application/local-tool-runner'
-import { createToolRegistry } from './domain/tool-registry'
-import { MAX_INPUT_BYTES, SUPPORTED_IMAGE_MIME } from './domain/image-input'
-import { checkProvenance, createProvenanceInput, getPublicCapabilities, isProvenanceMimeSupported } from './infrastructure/provenance-client'
-import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
-import type { LocalJob } from './domain/local-job'
-import type { ToolDefinition } from './domain/tool'
-import { ImageEditor } from './components/ImageEditor'
+import { exportEditor, type DecodedSource } from './application/editor-renderer'
+import { createBrowserCanvasFactory, decodeEditorSource } from './infrastructure/editor-canvas'
+import {
+  type EditorHistory,
+  type EditorState,
+  type Adjustments,
+  type TextBgStyle,
+  createEditorState,
+  pushHistory,
+  undoHistory,
+  redoHistory,
+  normalizeAspectRatio,
+  rotateEditorState,
+} from './domain/editor-state'
+import {
+  checkProvenance,
+  createProvenanceInput,
+  getPublicCapabilities,
+  isProvenanceMimeSupported,
+} from './infrastructure/provenance-client'
+import { CanvasViewport } from './components/editor/CanvasViewport'
+import { TopActionBar } from './components/editor/TopActionBar'
+import { BottomDock, type ActiveTool } from './components/editor/BottomDock'
+import { EmptyDropzone } from './components/editor/EmptyDropzone'
+import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
+import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
 import './styles.css'
 
-const registry = createToolRegistry()
-
-const FORMAT_LABELS: Record<string, string> = { 'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WebP' }
-const INPUT_ACCEPT = SUPPORTED_IMAGE_MIME.join(',')
-const INPUT_FORMAT_LABELS = SUPPORTED_IMAGE_MIME.map((mime) => FORMAT_LABELS[mime] ?? mime).join(' · ')
-const MAX_INPUT_MB = Math.round(MAX_INPUT_BYTES / 1024 / 1024)
-
 export function App() {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
-  const [fileRevision, setFileRevision] = useState(0)
-  const [selectedToolId, setSelectedToolId] = useState('convert')
-  const [outputMime, setOutputMime] = useState('image/webp')
-  const [quality, setQuality] = useState(88)
-  const [resizeWidth, setResizeWidth] = useState('1600')
-  const [cropWidth, setCropWidth] = useState('1200')
-  const [cropHeight, setCropHeight] = useState('900')
-  const [rotation, setRotation] = useState('90')
-  const [watermarkText, setWatermarkText] = useState('OneImage')
-  const [resultUrl, setResultUrl] = useState<string | null>(null)
-  const [resultName, setResultName] = useState<string | null>(null)
-  const [resultBlob, setResultBlob] = useState<Blob | null>(null)
-  const [job, setJob] = useState<LocalJob | null>(null)
-  const [provenance, setProvenance] = useState<ProvenanceResult | null>(null)
-  const [provenanceBusy, setProvenanceBusy] = useState(false)
-  const [provenanceMessage, setProvenanceMessage] = useState<string | null>(null)
-  const [provenanceEnabled, setProvenanceEnabled] = useState(false)
-  const [message, setMessage] = useState('选择一张图片，所有 P0 工具默认在本地运行。')
-  const controllerRef = useRef<AbortController | null>(null)
-  const resultUrlRef = useRef<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const factory = useMemo(() => createBrowserCanvasFactory(), [])
 
-  useEffect(() => () => {
-    controllerRef.current?.abort()
-    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
+  // Loaded File & Source Bitmap
+  const [file, setFile] = useState<File | null>(null)
+  const [decodedSource, setDecodedSource] = useState<DecodedSource | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  // Editor Domain History
+  const [history, setHistory] = useState<EditorHistory | null>(null)
+
+  // Cleanup decoded bitmap on unmount
+  useEffect(() => {
+    return () => {
+      decodedSource?.close()
+    }
+  }, [decodedSource])
+
+  // Active Tooling & SubToolbar State
+  const [activeTool, setActiveTool] = useState<ActiveTool>('none')
+
+  // Tool settings
+  const [cropRatio, setCropRatio] = useState('free')
+  const [markupMode, setMarkupMode] = useState<MarkupMode>('brush')
+  const [markupColor, setMarkupColor] = useState('#ef4444')
+  const [markupWidth, setMarkupWidth] = useState(6)
+  const [mosaicType, setMosaicType] = useState<MosaicType>('pixel')
+  const [mosaicBlockSize, setMosaicBlockSize] = useState(16)
+  const [textStyle, setTextStyle] = useState<TextBgStyle>('translucent')
+  const [textColor, setTextColor] = useState('#ffffff')
+  const [textSize, setTextSize] = useState(28)
+
+  // Compress & Export settings
+  const [outputMime, setOutputMime] = useState('image/webp')
+  const [quality, setQuality] = useState(85)
+  const [stripMetadata, setStripMetadata] = useState(true)
+  const [estimatedBytes, setEstimatedBytes] = useState<number | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // Provenance state
+  const [provenanceEnabled, setProvenanceEnabled] = useState(false)
+  const [isCheckingProvenance, setIsCheckingProvenance] = useState(false)
+  const [provenanceResult, setProvenanceResult] = useState<{ detected: boolean; note?: string } | null>(null)
+
+  // Viewport Camera (Pan & Zoom)
+  const [zoomScale, setZoomScale] = useState(1.0)
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+  const [isComparingOriginal, setIsComparingOriginal] = useState(false)
+
+  // Toast feedback
+  const [toast, setToast] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null)
+
+  const showToast = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
+    setToast({ text, type })
+    setTimeout(() => setToast(null), 3000)
   }, [])
 
+  // Check public server capabilities on load
   useEffect(() => {
     let active = true
-    void getPublicCapabilities().then((capabilities) => {
-      if (active) setProvenanceEnabled(capabilities.provenance.enabled)
-    }).catch(() => {
-      if (active) setProvenanceEnabled(false)
-    })
-    return () => { active = false }
+    void getPublicCapabilities()
+      .then((cap) => {
+        if (active) setProvenanceEnabled(cap.provenance.enabled)
+      })
+      .catch(() => {
+        if (active) setProvenanceEnabled(false)
+      })
+    return () => {
+      active = false
+    }
   }, [])
 
-  const selectedTool = useMemo(() => registry.get(selectedToolId) ?? registry.list()[0], [selectedToolId])
-
-  function selectFile(nextFile: File | undefined): void {
-    if (!nextFile) return
-    controllerRef.current?.abort()
-    const validation = validateImageFile(nextFile)
-    if (!validation.ok) {
-      setMessage(validation.message)
-      return
-    }
-    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
-    setFile(nextFile)
-    setFileRevision((revision) => revision + 1)
-    if (inputRef.current) inputRef.current.value = ''
-    resultUrlRef.current = null
-    setResultUrl(null)
-    setResultName(null)
-    setResultBlob(null)
-    setProvenance(null)
-    setProvenanceMessage(null)
-    setMessage(`${nextFile.name} 已载入，尚未上传服务器。`)
-  }
-
-  async function runTool(currentImage: Blob): Promise<void> {
-    if (!file) return
-    controllerRef.current?.abort()
-    const controller = new AbortController()
-    controllerRef.current = controller
-    setMessage(`${selectedTool.title}处理中…`)
-    try {
-      const input = new File([currentImage], file.name, { type: currentImage.type || file.type, lastModified: file.lastModified })
-      const options = {
-        outputMime,
-        quality: quality / 100,
-        ...(selectedTool.id === 'resize' ? { width: Number(resizeWidth) } : {}),
-        ...(selectedTool.id === 'crop' ? { cropWidth: Number(cropWidth), cropHeight: Number(cropHeight) } : {}),
-        ...(selectedTool.id === 'rotate' ? { rotation: Number(rotation) } : {}),
-        ...(selectedTool.id === 'watermark' ? { watermarkText } : {}),
-      }
-      const result = await runLocalTool(selectedTool.id, input, {
-        ...options,
-      }, controller.signal, setJob)
-      if (controller.signal.aborted) return
-      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
-      const nextResultUrl = URL.createObjectURL(result.blob)
-      resultUrlRef.current = nextResultUrl
-      setResultUrl(nextResultUrl)
-      setResultName(result.filename)
-      setResultBlob(result.blob)
-      setProvenance(null)
-      setProvenanceMessage(null)
-      setMessage(`已完成：${result.filename}，仍在本地。`)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        setMessage('任务已取消。')
+  // Load and decode an image file
+  const loadFile = useCallback(
+    async (nextFile: File) => {
+      const validation = validateImageFile(nextFile)
+      if (!validation.ok) {
+        setErrorMessage(validation.message)
+        showToast(validation.message, 'error')
         return
       }
-      setMessage(error instanceof Error ? error.message : '处理失败，请重试。')
+
+      setErrorMessage(null)
+      setIsProcessing(true)
+
+      try {
+        const decoded = await decodeEditorSource(nextFile)
+        decodedSource?.close()
+        setFile(nextFile)
+        setDecodedSource(decoded)
+
+        const initial = createEditorState(decoded.width, decoded.height)
+        setHistory({ past: [], present: initial, future: [] })
+        setActiveTool('none')
+        setProvenanceResult(null)
+
+        // Fit image nicely into screen viewport
+        const margin = 120
+        const availW = window.innerWidth - margin
+        const availH = window.innerHeight - margin
+        const fitScale = Math.min(1.0, Math.min(availW / decoded.width, availH / decoded.height))
+        setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
+        setPanOffset({ x: 0, y: 0 })
+
+        showToast(`已载入 ${nextFile.name}，完全在本地处理`, 'success')
+      } catch (err) {
+        console.error('Failed to decode image:', err)
+        setErrorMessage('图片解析失败，可能格式损坏或不支持')
+        showToast('图片解析失败', 'error')
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [decodedSource, showToast]
+  )
+
+  // History operations
+  const currentState = history?.present || null
+
+  const handleStateChange = useCallback((nextState: EditorState) => {
+    setHistory((prev) => (prev ? { ...prev, present: nextState } : null))
+  }, [])
+
+  const handleCommitHistory = useCallback((nextState: EditorState) => {
+    setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
+  }, [])
+
+  const handleUndo = useCallback(() => {
+    setHistory((prev) => (prev ? undoHistory(prev) : null))
+  }, [])
+
+  const handleRedo = useCallback(() => {
+    setHistory((prev) => (prev ? redoHistory(prev) : null))
+  }, [])
+
+  const handleRevert = useCallback(() => {
+    if (!decodedSource) return
+    const initial = createEditorState(decodedSource.width, decodedSource.height)
+    setHistory((prev) => (prev ? pushHistory(prev, initial) : null))
+    showToast('已还原为原始状态', 'info')
+  }, [decodedSource, showToast])
+
+  // Crop controls
+  const handleRatioSelect = useCallback(
+    (ratioStr: string) => {
+      if (!currentState) return
+      setCropRatio(ratioStr)
+      const ratio = normalizeAspectRatio(ratioStr)
+      const next = { ...currentState, aspectRatio: ratio }
+      handleStateChange(next)
+      handleCommitHistory(next)
+    },
+    [currentState, handleStateChange, handleCommitHistory]
+  )
+
+  const handleRotate90 = useCallback(() => {
+    if (!currentState) return
+    const next = rotateEditorState(currentState, 1)
+    handleStateChange(next)
+    handleCommitHistory(next)
+  }, [currentState, handleStateChange, handleCommitHistory])
+
+  const handleFlipH = useCallback(() => {
+    if (!currentState) return
+    const next = { ...currentState, flipX: !currentState.flipX }
+    handleStateChange(next)
+    handleCommitHistory(next)
+  }, [currentState, handleStateChange, handleCommitHistory])
+
+  const handleFlipV = useCallback(() => {
+    if (!currentState) return
+    const next = { ...currentState, flipY: !currentState.flipY }
+    handleStateChange(next)
+    handleCommitHistory(next)
+  }, [currentState, handleStateChange, handleCommitHistory])
+
+  const handleResetCrop = useCallback(() => {
+    if (!currentState || !decodedSource) return
+    const next = {
+      ...currentState,
+      crop: { x: 0, y: 0, width: decodedSource.width, height: decodedSource.height },
+      aspectRatio: null,
     }
-  }
+    setCropRatio('free')
+    handleStateChange(next)
+    handleCommitHistory(next)
+  }, [currentState, decodedSource, handleStateChange, handleCommitHistory])
 
-  function cancelTool(): void {
-    controllerRef.current?.abort()
-  }
+  // Adjustments change
+  const handleAdjustmentsChange = useCallback(
+    (adj: Adjustments) => {
+      if (!currentState) return
+      const next = { ...currentState, adjustments: adj }
+      handleStateChange(next)
+    },
+    [currentState, handleStateChange]
+  )
 
-  function handleEditorExport(blob: Blob, filename: string): void {
-    controllerRef.current?.abort()
-    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current)
-    const nextResultUrl = URL.createObjectURL(blob)
-    resultUrlRef.current = nextResultUrl
-    setResultUrl(nextResultUrl)
-    setResultName(filename)
-    setResultBlob(blob)
-    setProvenance(null)
-    setProvenanceMessage(null)
-    setMessage(`已完成：${filename}，仍在本地。`)
-  }
+  const handleAdjustmentsReset = useCallback(() => {
+    if (!currentState) return
+    const next = {
+      ...currentState,
+      adjustments: { brightness: 0, contrast: 0, saturation: 0, sharpen: 0, blur: 0 },
+    }
+    handleStateChange(next)
+    handleCommitHistory(next)
+    showToast('调色已重置', 'info')
+  }, [currentState, handleStateChange, handleCommitHistory, showToast])
 
-  async function inspectProvenance(): Promise<void> {
-    if (!file || provenanceBusy) return
-    setProvenanceBusy(true)
-    setProvenanceMessage(null)
+  // Export to Blob
+  const exportImage = useCallback(
+    async (mime: string, q: number): Promise<{ blob: Blob; filename: string }> => {
+      if (!decodedSource || !currentState || !file) {
+        throw new Error('未加载图片')
+      }
+      const blob = await exportEditor(decodedSource, currentState, factory, mime, q / 100)
+      const baseName = file.name.replace(/\.[^/.]+$/, '')
+      const ext = mime === 'image/webp' ? 'webp' : mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'avif'
+      const filename = `${baseName}_edited.${ext}`
+      return { blob, filename }
+    },
+    [decodedSource, currentState, file, factory]
+  )
+
+  // Download Trigger
+  const handleQuickExport = useCallback(async () => {
+    if (!file) return
+    setIsProcessing(true)
     try {
-      const input = resultBlob
-        ? createProvenanceInput(resultBlob, resultName ?? 'oneimage-result.png')
-        : file
-      setProvenance(await checkProvenance(input))
-    } catch (error) {
-      setProvenance(null)
-      setProvenanceMessage(error instanceof Error ? error.message : '来源检查失败，请稍后重试。')
+      const { blob, filename } = await exportImage(outputMime, quality)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      showToast(`已导出并下载：${filename}`, 'success')
+    } catch (err) {
+      console.error('Export failed:', err)
+      showToast('导出失败，请重试', 'error')
     } finally {
-      setProvenanceBusy(false)
+      setIsProcessing(false)
     }
-  }
+  }, [file, exportImage, outputMime, quality, showToast])
+
+  const handleExportFormat = useCallback(
+    async (mime: string) => {
+      setOutputMime(mime)
+      setIsProcessing(true)
+      try {
+        const { blob, filename } = await exportImage(mime, quality)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      showToast(`已保存为 ${mime.split('/')[1].toUpperCase()}：${filename}`, 'success')
+      } catch (err) {
+        console.error('Export failed:', err)
+        showToast('保存失败', 'error')
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [exportImage, quality, showToast]
+  )
+
+  // Copy to Clipboard (as PNG)
+  const handleCopyToClipboard = useCallback(async () => {
+    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+      showToast('当前浏览器不支持直接写入剪贴板图片', 'error')
+      return
+    }
+    setIsProcessing(true)
+    try {
+      const { blob } = await exportImage('image/png', 100)
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob }),
+      ])
+      showToast('已复制图片到系统剪贴板！可以直接在微信/QQ等按 ⌘V 粘贴', 'success')
+    } catch (err) {
+      console.error('Copy to clipboard failed:', err)
+      showToast('复制到剪贴板失败', 'error')
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [exportImage, showToast])
+
+  // Live estimated size (debounced)
+  useEffect(() => {
+    if (!decodedSource || !currentState || !file) {
+      setEstimatedBytes(null)
+      return
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const { blob } = await exportImage(outputMime, quality)
+        setEstimatedBytes(blob.size)
+      } catch {
+        // ignore background estimation error
+      }
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [decodedSource, currentState, file, outputMime, quality, exportImage])
+
+  // Provenance AI Signal Check
+  const handleCheckProvenance = useCallback(async () => {
+    if (!file || !decodedSource || !currentState) return
+    setIsCheckingProvenance(true)
+    try {
+      const { blob } = await exportImage('image/jpeg', 92)
+      const input = createProvenanceInput(blob, file.name)
+      const result = await checkProvenance(input)
+      const detected = result.evidence.some((e) => e.outcome === 'detected')
+      const note = result.evidence.length > 0
+        ? result.evidence.map((e) => `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${e.issuer ? ` (${e.issuer})` : ''}`).join(' · ')
+        : detected
+        ? '已识别到数字水印或元数据来源标记'
+        : '未检出嵌入式 AI 来源信号'
+      setProvenanceResult({ detected, note })
+      showToast(detected ? '检出 AI 来源信号' : '未检出 AI 信号', detected ? 'info' : 'success')
+    } catch (err) {
+      console.error('Provenance check failed:', err)
+      showToast('来源检测失败，服务可能未开启', 'error')
+    } finally {
+      setIsCheckingProvenance(false)
+    }
+  }, [file, decodedSource, currentState, exportImage, showToast])
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      // Undo / Redo
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.code === 'KeyZ') {
+        e.preventDefault()
+        handleUndo()
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.shiftKey && e.code === 'KeyZ' || e.code === 'KeyY')) {
+        e.preventDefault()
+        handleRedo()
+        return
+      }
+
+      // Copy to clipboard
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC') {
+        if (file) {
+          e.preventDefault()
+          handleCopyToClipboard()
+        }
+        return
+      }
+
+      // Quick save
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyS') {
+        e.preventDefault()
+        handleQuickExport()
+        return
+      }
+
+      // Single key tool shortcuts
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.code === 'KeyC') setActiveTool((prev) => (prev === 'crop' ? 'none' : 'crop'))
+        else if (e.code === 'KeyB') setActiveTool((prev) => (prev === 'markup' ? 'none' : 'markup'))
+        else if (e.code === 'KeyM') setActiveTool((prev) => (prev === 'mosaic' ? 'none' : 'mosaic'))
+        else if (e.code === 'KeyT') setActiveTool((prev) => (prev === 'text' ? 'none' : 'text'))
+        else if (e.code === 'KeyF') setActiveTool((prev) => (prev === 'adjust' ? 'none' : 'adjust'))
+        else if (e.code === 'KeyO') setActiveTool((prev) => (prev === 'compress' ? 'none' : 'compress'))
+        else if (e.code === 'Backslash') setIsComparingOriginal(true)
+        else if (e.code === 'Escape') setActiveTool('none')
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Backslash') {
+        setIsComparingOriginal(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [file, handleUndo, handleRedo, handleCopyToClipboard, handleQuickExport])
+
+  // Global Paste listener (Cmd+V)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+        const pasted = e.clipboardData.files[0]
+        if (pasted.type.startsWith('image/')) {
+          e.preventDefault()
+          loadFile(pasted)
+        }
+      }
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [loadFile])
 
   return (
-    <main className="shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark">◎</span><span>ONEIMAGE</span></div>
-        <div className="topbar-note"><span className="live-dot" />LOCAL-FIRST WORKSPACE</div>
-      </header>
+    <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 select-none">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/avif"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files && e.target.files[0]) {
+            loadFile(e.target.files[0])
+          }
+        }}
+      />
 
-      <section className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">IMAGE / WORKBENCH 01</p>
-          <h1>把图片处理<br /><em>留在你手里。</em></h1>
-          <p className="lede">一个浏览器优先的图片工作台。常规处理不上传，只有你明确选择的 AI 能力才会离开设备。</p>
+      {file && decodedSource && currentState ? (
+        <>
+          {/* Top Glass Action Bar */}
+          <TopActionBar
+            fileName={file.name}
+            fileSize={file.size}
+            dimensions={{ width: decodedSource.width, height: decodedSource.height }}
+            zoomPercent={Math.round(zoomScale * 100)}
+            canUndo={history ? history.past.length > 0 : false}
+            canRedo={history ? history.future.length > 0 : false}
+            isComparingOriginal={isComparingOriginal}
+            isProcessing={isProcessing}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            onRevert={handleRevert}
+            onZoomIn={() => setZoomScale((s) => Math.min(32, s * 1.25))}
+            onZoomOut={() => setZoomScale((s) => Math.max(0.05, s * 0.8))}
+            onZoomReset={() => {
+              if (Math.abs(zoomScale - 1.0) < 0.1) {
+                // Fit
+                const margin = 120
+                const fit = Math.min(1.0, Math.min((window.innerWidth - margin) / decodedSource.width, (window.innerHeight - margin) / decodedSource.height))
+                setZoomScale(fit)
+              } else {
+                setZoomScale(1.0)
+              }
+              setPanOffset({ x: 0, y: 0 })
+            }}
+            onCompareStart={() => setIsComparingOriginal(true)}
+            onCompareEnd={() => setIsComparingOriginal(false)}
+            onReplaceImage={() => fileInputRef.current?.click()}
+            onQuickExport={handleQuickExport}
+            onExportFormat={handleExportFormat}
+            onCopyToClipboard={handleCopyToClipboard}
+          />
+
+          {/* Master Spatial Canvas Viewport */}
+          <main className="w-full h-full">
+            <CanvasViewport
+              source={decodedSource}
+              state={currentState}
+              activeTool={activeTool}
+              markupMode={markupMode}
+              markupColor={markupColor}
+              markupWidth={markupWidth}
+              mosaicType={mosaicType}
+              mosaicBlockSize={mosaicBlockSize}
+              textStyle={textStyle}
+              textColor={textColor}
+              textSize={textSize}
+              isComparingOriginal={isComparingOriginal}
+              zoomScale={zoomScale}
+              panOffset={panOffset}
+              onZoomChange={setZoomScale}
+              onPanChange={setPanOffset}
+              onStateChange={handleStateChange}
+              onCommitHistory={handleCommitHistory}
+            />
+          </main>
+
+          {/* Bottom WeChat / QQ Capsule Dock */}
+          <BottomDock
+            activeTool={activeTool}
+            onToolSelect={setActiveTool}
+            cropRatio={cropRatio}
+            onRatioSelect={handleRatioSelect}
+            onRotate90={handleRotate90}
+            onFlipH={handleFlipH}
+            onFlipV={handleFlipV}
+            onResetCrop={handleResetCrop}
+            markupMode={markupMode}
+            markupColor={markupColor}
+            markupWidth={markupWidth}
+            onMarkupModeSelect={setMarkupMode}
+            onMarkupColorSelect={setMarkupColor}
+            onMarkupWidthSelect={setMarkupWidth}
+            mosaicType={mosaicType}
+            mosaicBlockSize={mosaicBlockSize}
+            onMosaicTypeSelect={setMosaicType}
+            onMosaicBlockSizeSelect={setMosaicBlockSize}
+            textStyle={textStyle}
+            textColor={textColor}
+            textSize={textSize}
+            onTextStyleSelect={setTextStyle}
+            onTextColorSelect={setTextColor}
+            onTextSizeSelect={setTextSize}
+            adjustments={currentState.adjustments}
+            onAdjustmentsChange={handleAdjustmentsChange}
+            onAdjustmentsReset={handleAdjustmentsReset}
+            outputMime={outputMime}
+            quality={quality}
+            estimatedBytes={estimatedBytes}
+            originalBytes={file.size}
+            stripMetadata={stripMetadata}
+            isCheckingProvenance={isCheckingProvenance}
+            provenanceResult={provenanceResult}
+            onMimeSelect={setOutputMime}
+            onQualityChange={setQuality}
+            onToggleStripMetadata={() => setStripMetadata((v) => !v)}
+            onCheckProvenance={handleCheckProvenance}
+          />
+        </>
+      ) : (
+        /* Empty State Dropzone */
+        <EmptyDropzone onFileSelect={loadFile} error={errorMessage} />
+      )}
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div
+          className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-2xl text-xs shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-2 duration-200 ${
+            toast.type === 'success'
+              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
+              : toast.type === 'error'
+              ? 'bg-rose-950/80 text-rose-300 border border-rose-500/30'
+              : 'bg-zinc-900/80 text-zinc-300 border border-zinc-700/50'
+          }`}
+        >
+          <span>{toast.text}</span>
         </div>
-        <div className="hero-orbit" aria-hidden="true"><span>LOCAL</span><span>PRIVATE</span><span>OPEN</span></div>
-      </section>
-
-      <section className="workspace">
-        <aside className="toolrail">
-          <div className="section-label">TOOLS / P0</div>
-          {registry.list().map((tool) => <ToolButton key={tool.id} tool={tool} active={tool.id === selectedTool.id} onClick={() => setSelectedToolId(tool.id)} />)}
-          <div className="toolrail-footer"><span className="mini-lock">⌁</span> NO UPLOAD<br />BY DEFAULT</div>
-        </aside>
-
-        <section className="canvas-panel">
-          <div className="panel-heading"><div><span className="section-label">{selectedTool.category.toUpperCase()} / {selectedTool.id.toUpperCase()}</span><h2>{selectedTool.title}</h2></div><span className="plane-chip">BROWSER</span></div>
-          {!file && <div className="dropzone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFile(event.dataTransfer.files[0]) }}>
-            <div className="drop-icon">＋</div><strong>拖入图片，或点击选择</strong><span>{INPUT_FORMAT_LABELS} / 最大 {MAX_INPUT_MB} MB</span>
-            <input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => selectFile(event.target.files?.[0])} />
-          </div>}
-          {file && <><ImageEditor key={fileRevision} file={file} outputMime={outputMime} quality={quality / 100} onExport={handleEditorExport} onRunTool={runTool} /><button type="button" className="replace-image" onClick={() => inputRef.current?.click()}>更换原图</button><input ref={inputRef} type="file" accept={INPUT_ACCEPT} hidden onChange={(event) => { const selected = event.target.files?.[0]; event.currentTarget.value = ''; selectFile(selected) }} /></>}
-          {resultUrl && <a className="result-link" href={resultUrl} download={resultName ?? 'oneimage-result.png'}><span>↓</span> 下载处理结果 · {resultName}</a>}
-          {file && provenanceEnabled && isProvenanceMimeSupported(resultBlob?.type ?? file.type) && <button className="provenance-action" onClick={inspectProvenance} disabled={provenanceBusy}>{provenanceBusy ? '检查中…' : resultBlob ? '检查当前编辑结果的来源信号' : '检查原图的来源信号'} <span>⌁</span></button>}
-          {provenance && <ProvenanceCard result={provenance} />}
-          {provenanceMessage && <p className="provenance-error">{provenanceMessage}</p>}
-        </section>
-
-        <aside className="settings-panel">
-          <div className="section-label">CONTROL / 01</div>
-          <p className="tool-description">{selectedTool.description}</p>
-          {selectedTool.id === 'convert' && <label>输出格式<select value={outputMime} onChange={(event) => setOutputMime(event.target.value)}><option value="image/webp">WebP</option><option value="image/png">PNG</option><option value="image/jpeg">JPEG</option><option value="image/avif">AVIF</option></select></label>}
-          {selectedTool.id === 'compress' && <label>质量 <output>{quality}%</output><input type="range" min="10" max="100" value={quality} onChange={(event) => setQuality(Number(event.target.value))} /></label>}
-          {selectedTool.id === 'resize' && <label>目标宽度（px）<input type="number" min="1" max="8000" value={resizeWidth} onChange={(event) => setResizeWidth(event.target.value)} /></label>}
-          {selectedTool.id === 'crop' && <div className="field-row"><label>裁剪宽度<input type="number" min="1" max="8000" value={cropWidth} onChange={(event) => setCropWidth(event.target.value)} /></label><label>裁剪高度<input type="number" min="1" max="8000" value={cropHeight} onChange={(event) => setCropHeight(event.target.value)} /></label></div>}
-          {selectedTool.id === 'rotate' && <label>旋转角度<select value={rotation} onChange={(event) => setRotation(event.target.value)}><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>}
-          {selectedTool.id === 'watermark' && <label>水印文字<input value={watermarkText} maxLength={80} onChange={(event) => setWatermarkText(event.target.value)} /></label>}
-          <div className="privacy-note"><span>⌁</span><div><strong>本地处理</strong><br />编辑预览和导出都不会上传原图。</div></div>
-          {job?.status === 'running' && <button className="cancel-action" onClick={cancelTool}>取消任务</button>}
-          <p className="status-line"><span className={`status-dot ${job?.status === 'failed' ? 'error' : ''}`} />{message}</p>
-        </aside>
-      </section>
-
-      <footer className="footer"><span>ONEIMAGE / 0.1.0</span><span>OPEN SOURCE IMAGE WORKBENCH</span><span>LOCAL-FIRST · NO GPU · API WHEN NEEDED</span></footer>
-    </main>
+      )}
+    </div>
   )
-}
-
-function ToolButton({ tool, active, onClick }: { tool: ToolDefinition; active: boolean; onClick: () => void }) {
-  return <button className={`tool-button ${active ? 'active' : ''}`} onClick={onClick}><span className="tool-index">{String(['convert', 'compress', 'resize', 'crop', 'rotate', 'watermark', 'metadata-clean'].indexOf(tool.id) + 1).padStart(2, '0')}</span><span>{tool.title}</span><span className="tool-arrow">↗</span></button>
-}
-
-function ProvenanceCard({ result }: { result: ProvenanceResult }) {
-  return <div className="provenance-card"><div className="provenance-card-heading"><span className="section-label">PROVENANCE / OPENAI</span><span className="provenance-time">{new Date(result.checkedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div><p className="provenance-card-note">此处检测的是 C2PA / SynthID 内容溯源信号，不是可见水印是否存在。</p>{result.evidence.length === 0 ? <p>未返回可用的 OpenAI 来源信号。这个结果不等于“不是 AI 生成”。</p> : result.evidence.map((item) => <div className="evidence-row" key={item.signal}><span className={`evidence-badge ${item.outcome === 'detected' ? 'detected' : ''}`}>{item.outcome === 'detected' ? 'DETECTED' : 'NOT DETECTED'}</span><div><strong>{item.signal === 'c2pa' ? 'C2PA Content Credentials' : 'SynthID'}</strong><small>{item.signal === 'c2pa' ? `${item.issuer ?? '未知 issuer'} · ${item.validationState ?? '未验证'}` : 'OpenAI 支持的嵌入式信号'}</small></div></div>)}</div>
 }

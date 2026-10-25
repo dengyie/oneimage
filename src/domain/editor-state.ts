@@ -5,6 +5,29 @@ export interface Rect {
   height: number
 }
 
+export interface Point {
+  x: number
+  y: number
+}
+
+export type AnnotationType = 'brush' | 'highlighter' | 'arrow' | 'rect' | 'ellipse' | 'mosaic' | 'text'
+export type TextBgStyle = 'none' | 'translucent' | 'solid'
+
+export interface AnnotationLayer {
+  id: string
+  type: AnnotationType
+  points?: Point[]               // for brush, highlighter, arrow
+  rect?: Rect                    // for rect, ellipse, mosaic, text bounding
+  color: string                  // hex or rgba
+  strokeWidth: number            // 2, 4, 8, etc.
+  opacity?: number               // e.g. 0.4 for highlighter
+  text?: string                  // for text annotations
+  fontSize?: number
+  textBgStyle?: TextBgStyle
+  mosaicType?: 'pixel' | 'blur'  // for mosaic tool
+  mosaicBlockSize?: number       // 8, 16, 24
+}
+
 export interface Adjustments {
   brightness: number
   contrast: number
@@ -30,6 +53,7 @@ export interface EditorState {
   flipY: boolean
   adjustments: Adjustments
   localAdjustments: LocalAdjustment[]
+  annotations?: readonly AnnotationLayer[]
 }
 
 export interface EditorHistory {
@@ -59,6 +83,7 @@ export function createEditorState(sourceWidth: number, sourceHeight: number): Ed
     flipY: false,
     adjustments: { ...DEFAULT_ADJUSTMENTS },
     localAdjustments: [],
+    annotations: [],
   }
 }
 
