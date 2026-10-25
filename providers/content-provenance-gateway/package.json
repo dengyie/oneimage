@@ -30,6 +30,6 @@
     "test": "node --test test/server.test.mjs"
   },
   "dependencies": {
-    "undici": "^7.30.0"
+    "undici": "^7.30.1"
   }
 }
