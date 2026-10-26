@@ -11,6 +11,7 @@ import { createRateLimiter } from './rate-limit'
 import { initDatabase } from './db'
 import { registerAuthRoutes } from './auth-routes'
 import { registerProjectRoutes } from './project-routes'
+import { createOneMailMailer } from './onemail'
 
 async function main(): Promise<void> {
   // state_json carries the full serialized editor state (stroke point arrays
@@ -31,9 +32,21 @@ async function main(): Promise<void> {
   // Initialize SQLite Database
   const appDb = initDatabase()
 
+  // Registration verification-code delivery via the one-mail external API.
+  // Without ONEMAIL_SEND_TOKEN the email-code endpoint degrades to 503 while
+  // the rest of the auth surface keeps working.
+  const onemailToken = process.env.ONEMAIL_SEND_TOKEN ?? ''
+  const verificationMailer = onemailToken
+    ? createOneMailMailer({
+        apiBase: process.env.ONEMAIL_API_BASE ?? 'https://mail-api.mangoqwq.com',
+        token: onemailToken,
+        fromName: process.env.ONEMAIL_FROM_NAME ?? 'OneImage',
+      })
+    : undefined
+
   registerHealthRoute(app, { providerConfigured: Boolean(process.env.OPENAI_API_KEY) })
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
-  registerAuthRoutes(app, appDb.db, { rateLimiter: authRateLimiter })
+  registerAuthRoutes(app, appDb.db, { rateLimiter: authRateLimiter, mailer: verificationMailer })
   registerProjectRoutes(app, appDb.db, { rateLimiter: projectsRateLimiter })
   registerProvenanceRoute(
     app,

@@ -86,6 +86,16 @@ export function initDatabase(dbPath?: string): AppDatabase {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS email_verifications (
+      email TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL,
+      attempts INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      last_sent_at INTEGER NOT NULL,
+      sent_count INTEGER NOT NULL,
+      window_start INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_cloud_projects_user_id ON cloud_projects(user_id);

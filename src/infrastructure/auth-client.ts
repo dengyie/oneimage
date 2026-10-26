@@ -56,10 +56,30 @@ export async function loginUser(account: string, password: string): Promise<{ ok
   }
 }
 
+export async function requestEmailCode(email: string): Promise<{ ok: boolean; message?: string; resendAfterSeconds?: number }> {
+  try {
+    const res = await fetch('/api/v1/auth/email-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      return { ok: false, message: data.message || '验证码发送失败' }
+    }
+    const data = await res.json()
+    return { ok: true, resendAfterSeconds: data.resendAfterSeconds }
+  } catch (err: any) {
+    return { ok: false, message: err?.message || '网络连接失败' }
+  }
+}
+
 export async function registerUser(
   username: string,
   email: string,
   password: string,
+  emailCode: string,
   nickname?: string
 ): Promise<{ ok: boolean; user?: SafeUser; message?: string }> {
   try {
@@ -67,7 +87,7 @@ export async function registerUser(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ username, email, password, nickname }),
+      body: JSON.stringify({ username, email, password, email_code: emailCode, nickname }),
     })
     const data = await res.json()
     if (!res.ok) {

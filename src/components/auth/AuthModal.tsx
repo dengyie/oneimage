@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { UiIcon } from '../ui/UiIcon'
-import { loginUser, registerUser, type SafeUser } from '../../infrastructure/auth-client'
+import { loginUser, registerUser, requestEmailCode, type SafeUser } from '../../infrastructure/auth-client'
 
 interface AuthModalProps {
   isOpen: boolean
@@ -15,10 +15,66 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [nickname, setNickname] = useState('')
+  const [emailCode, setEmailCode] = useState('')
+  const [codeCooldown, setCodeCooldown] = useState(0)
+  const [codeSending, setCodeSending] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const cooldownTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current !== null) window.clearInterval(cooldownTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) {
+      setError(null)
+      setNotice(null)
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
+
+  const startCooldown = (seconds: number) => {
+    setCodeCooldown(seconds)
+    if (cooldownTimerRef.current !== null) window.clearInterval(cooldownTimerRef.current)
+    cooldownTimerRef.current = window.setInterval(() => {
+      setCodeCooldown((prev) => {
+        if (prev <= 1) {
+          if (cooldownTimerRef.current !== null) window.clearInterval(cooldownTimerRef.current)
+          cooldownTimerRef.current = null
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  const handleSendCode = async () => {
+    const cleanEmail = email.trim()
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('请先输入有效的邮箱地址')
+      return
+    }
+    setCodeSending(true)
+    setError(null)
+    const res = await requestEmailCode(cleanEmail)
+    setCodeSending(false)
+    if (res.ok) {
+      setEmailCode('')
+      startCooldown(res.resendAfterSeconds ?? 60)
+      setError(null)
+      setNotice(`验证码已发送至 ${cleanEmail}，请查收邮件（通常 1 分钟内送达）`)
+    } else {
+      setError(res.message || '验证码发送失败')
+      // Honor a server-side throttle window so the retry lands after it.
+      const throttled = res.message?.includes('秒后重试')
+      if (throttled) startCooldown(60)
+    }
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -44,9 +100,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
       setError('请完整填写用户名、邮箱与密码')
       return
     }
+    if (!emailCode.trim()) {
+      setError('请输入邮箱验证码')
+      return
+    }
     setLoading(true)
     setError(null)
-    const res = await registerUser(username, email, password, nickname || undefined)
+    const res = await registerUser(username, email, password, emailCode.trim(), nickname || undefined)
     setLoading(false)
     if (res.ok && res.user) {
       onSuccess(res.user)
@@ -92,6 +152,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             onClick={() => {
               setTab('login')
               setError(null)
+              setNotice(null)
             }}
             className={`flex-1 py-1.5 rounded-lg transition-all ${
               tab === 'login'
@@ -106,6 +167,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             onClick={() => {
               setTab('register')
               setError(null)
+              setNotice(null)
             }}
             className={`flex-1 py-1.5 rounded-lg transition-all ${
               tab === 'register'
@@ -116,6 +178,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             新用户注册
           </button>
         </div>
+
+        {/* Success / info notification */}
+        {notice && (
+          <div className="mb-4 px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs">
+            {notice}
+          </div>
+        )}
 
         {/* Error notification */}
         {error && (
@@ -180,6 +249,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 placeholder="yourname@domain.com"
                 className="w-full px-3 py-2 rounded-xl bg-zinc-950/80 border border-white/10 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/60 transition-colors"
               />
+            </div>
+            <div>
+              <label className="block text-zinc-400 mb-1">邮箱验证码 (必填)</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={emailCode}
+                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6 位验证码"
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-zinc-950/80 border border-white/10 text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/60 transition-colors font-mono tracking-widest"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendCode}
+                  disabled={codeSending || codeCooldown > 0 || !email.trim().includes('@')}
+                  className="shrink-0 px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {codeSending ? '发送中...' : codeCooldown > 0 ? `${codeCooldown}s 后重发` : '发送验证码'}
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-zinc-400 mb-1">昵称 (选填)</label>

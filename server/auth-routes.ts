@@ -11,6 +11,13 @@ import {
   type SafeUser,
 } from './auth'
 import type { RateLimiter } from './rate-limit'
+import {
+  checkEmailCodeSendGate,
+  generateEmailCode,
+  storeEmailCode,
+  verifyEmailCode,
+} from './email-code'
+import type { VerificationMailer } from './onemail'
 
 export function extractSessionToken(request: FastifyRequest): string | null {
   const authHeader = request.headers.authorization
@@ -32,15 +39,24 @@ function setSessionCookie(reply: FastifyReply, token: string): void {
   )
 }
 
+function isValidEmail(email: string): boolean {
+  return email.includes('@') && email.length <= 128
+}
+
 export interface AuthRoutesOptions {
   // Throttles the scrypt-backed endpoints (register/login): these are the only
   // public paths whose per-request CPU cost can be weaponized, and they are the
-  // brute-force surface for credentials.
+  // brute-force surface for credentials. The email-code sender shares this
+  // limiter because each call triggers an outbound mail.
   rateLimiter?: RateLimiter
+  // Verification-code mail delivery. Absent (env not configured) makes the
+  // email-code endpoint return 503 while the rest of auth keeps working.
+  mailer?: VerificationMailer
 }
 
 export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, options: AuthRoutesOptions = {}): void {
   const rateLimiter = options.rateLimiter
+  const mailer = options.mailer
 
   const denyWhenOverLimit = (request: FastifyRequest, reply: FastifyReply): boolean => {
     if (rateLimiter && !rateLimiter.allow(request)) {
@@ -53,12 +69,60 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
     return false
   }
 
-  // Register
-  app.post('/api/v1/auth/register', async (request: FastifyRequest<{
-    Body: { username?: string; email?: string; password?: string; nickname?: string }
+  // Request a registration verification code. Gated three ways: the shared
+  // per-client limiter, a per-email resend cooldown, and a per-email hourly
+  // cap (both durable in SQLite) so a third party cannot mail-bomb an
+  // arbitrary inbox through this endpoint.
+  app.post('/api/v1/auth/email-code', async (request: FastifyRequest<{
+    Body: { email?: string }
   }>, reply: FastifyReply) => {
     if (denyWhenOverLimit(request, reply)) return
-    const { username, email, password, nickname } = request.body || {}
+
+    const email = (request.body?.email ?? '').trim().toLowerCase()
+    if (!isValidEmail(email)) {
+      return reply.status(400).send({
+        error: 'invalid_email',
+        message: '请输入有效的邮箱地址',
+      })
+    }
+
+    if (!mailer) {
+      return reply.status(503).send({
+        error: 'mail_unconfigured',
+        message: '邮件服务未配置，请联系站点管理员',
+      })
+    }
+
+    const gate = checkEmailCodeSendGate(db, email)
+    if (!gate.ok) {
+      return reply.header('Retry-After', String(gate.retryAfterSeconds)).status(429).send({
+        error: 'email_code_throttled',
+        reason: gate.reason,
+        message: gate.reason === 'cooldown' ? `发送过于频繁，请 ${gate.retryAfterSeconds} 秒后重试` : '该邮箱验证码发送次数已达上限，请 1 小时后重试',
+        retryAfterSeconds: gate.retryAfterSeconds,
+      })
+    }
+
+    const code = generateEmailCode()
+    storeEmailCode(db, email, code)
+    try {
+      await mailer.sendVerificationCode(email, code)
+    } catch (err: any) {
+      request.log.error({ err }, 'Failed to send verification email')
+      return reply.status(503).send({
+        error: 'mail_send_failed',
+        message: '验证码邮件发送失败，请稍后重试',
+      })
+    }
+    return reply.status(200).send({ ok: true, resendAfterSeconds: 60 })
+  })
+
+  // Register
+  app.post('/api/v1/auth/register', async (request: FastifyRequest<{
+    Body: { username?: string; email?: string; password?: string; nickname?: string; email_code?: string }
+  }>, reply: FastifyReply) => {
+    if (denyWhenOverLimit(request, reply)) return
+    const { username, email, password, nickname, email_code } = request.body || {}
 
     if (!username || !email || !password) {
       return reply.status(400).send({
@@ -77,7 +141,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       })
     }
 
-    if (!cleanEmail.includes('@') || cleanEmail.length > 128) {
+    if (!isValidEmail(cleanEmail)) {
       return reply.status(400).send({
         error: 'invalid_email',
         message: '请输入有效的邮箱地址',
@@ -88,6 +152,35 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       return reply.status(400).send({
         error: 'invalid_password',
         message: '密码长度需在 6-128 位之间',
+      })
+    }
+
+    // Registration requires a valid email verification code: single-use
+    // (deleted on success), 10-minute expiry, and locked after 5 wrong
+    // attempts.
+    if (!email_code) {
+      return reply.status(400).send({
+        error: 'email_code_required',
+        message: '请先获取邮箱验证码',
+      })
+    }
+    const codeResult = verifyEmailCode(db, cleanEmail, String(email_code))
+    if (codeResult !== 'ok') {
+      const errorCodes = {
+        missing: 'email_code_required',
+        expired: 'email_code_expired',
+        locked: 'email_code_locked',
+        mismatch: 'invalid_email_code',
+      } as const
+      const messages: Record<Exclude<typeof codeResult, 'ok'>, string> = {
+        missing: '请先获取邮箱验证码',
+        expired: '验证码已过期，请重新获取',
+        locked: '验证码错误次数过多，请重新获取',
+        mismatch: '验证码错误，请检查后重试',
+      }
+      return reply.status(400).send({
+        error: errorCodes[codeResult],
+        message: messages[codeResult],
       })
     }
 

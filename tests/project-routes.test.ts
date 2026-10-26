@@ -1,20 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import Fastify from 'fastify'
+import type { DatabaseSync } from 'node:sqlite'
 import { initDatabase } from '../server/db'
 import { registerAuthRoutes } from '../server/auth-routes'
 import { registerProjectRoutes } from '../server/project-routes'
+import { createFakeMailer, registerViaEmailCode, type FakeMailer } from './helpers'
 
 describe('Project routes', () => {
-  function createTestApp() {
+  function createTestApp(): { app: ReturnType<typeof Fastify>; appDb: { db: DatabaseSync; close: () => void }; mailer: FakeMailer } {
     const app = Fastify()
     const appDb = initDatabase(':memory:')
-    registerAuthRoutes(app, appDb.db)
+    const mailer = createFakeMailer()
+    registerAuthRoutes(app, appDb.db, { mailer })
     registerProjectRoutes(app, appDb.db)
-    return { app, appDb }
+    return { app, appDb, mailer }
   }
 
   it('rejects unauthenticated access with 401', async () => {
-    const { app, appDb } = createTestApp()
+    const { app, appDb, mailer } = createTestApp()
 
     const listRes = await app.inject({
       method: 'GET',
@@ -33,19 +36,15 @@ describe('Project routes', () => {
   })
 
   it('rejects invalid payloads with 400 and cross-user project ids with 409', async () => {
-    const { app, appDb } = createTestApp()
+    const { app, appDb, mailer } = createTestApp()
 
-    const regA = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/register',
-      payload: { username: 'owner_a', email: 'oa@example.com', password: 'password123' },
+    const regA = await registerViaEmailCode(app, appDb.db, mailer, {
+      username: 'owner_a', email: 'oa@example.com', password: 'password123',
     })
     const tokenA = JSON.parse(regA.body).sessionToken
 
-    const regB = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/register',
-      payload: { username: 'owner_b', email: 'ob@example.com', password: 'password123' },
+    const regB = await registerViaEmailCode(app, appDb.db, mailer, {
+      username: 'owner_b', email: 'ob@example.com', password: 'password123',
     })
     const tokenB = JSON.parse(regB.body).sessionToken
 
@@ -108,21 +107,17 @@ describe('Project routes', () => {
   })
 
   it('allows user to save, list, update, and delete cloud projects with tenant isolation', async () => {
-    const { app, appDb } = createTestApp()
+    const { app, appDb, mailer } = createTestApp()
 
     // Register User A
-    const regA = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/register',
-      payload: { username: 'user_a', email: 'a@example.com', password: 'password123' },
+    const regA = await registerViaEmailCode(app, appDb.db, mailer, {
+      username: 'user_a', email: 'a@example.com', password: 'password123',
     })
     const tokenA = JSON.parse(regA.body).sessionToken
 
     // Register User B
-    const regB = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/register',
-      payload: { username: 'user_b', email: 'b@example.com', password: 'password123' },
+    const regB = await registerViaEmailCode(app, appDb.db, mailer, {
+      username: 'user_b', email: 'b@example.com', password: 'password123',
     })
     const tokenB = JSON.parse(regB.body).sessionToken
 
