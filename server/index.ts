@@ -13,12 +13,19 @@ import { registerAuthRoutes } from './auth-routes'
 import { registerProjectRoutes } from './project-routes'
 
 async function main(): Promise<void> {
-  const app = Fastify({ logger: true })
+  // state_json carries the full serialized editor state (stroke point arrays
+  // included); the default 1MiB body limit would reject legitimately heavy
+  // annotation sessions, so the limit matches the 25MB input philosophy.
+  const app = Fastify({ logger: true, bodyLimit: 16 * 1024 * 1024 })
   const maxInputBytes = MAX_INPUT_BYTES
   await app.register(multipart, { limits: { fileSize: maxInputBytes, files: 1, parts: 1 } })
   const serverToken = process.env.ONEIMAGE_SERVER_TOKEN ?? ''
   configureOutboundProxy(process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy)
   const rateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 30, maxTrackedClients: 10_000 })
+  // register/login burn one scrypt per request; project routes accept
+  // unbounded writes. Both are public or session-keyed surfaces.
+  const authRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 10, maxTrackedClients: 10_000 })
+  const projectsRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 60, maxTrackedClients: 10_000 })
   const allowDevelopmentOrigin = process.env.NODE_ENV === 'development'
 
   // Initialize SQLite Database
@@ -26,8 +33,8 @@ async function main(): Promise<void> {
 
   registerHealthRoute(app, { providerConfigured: Boolean(process.env.OPENAI_API_KEY) })
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
-  registerAuthRoutes(app, appDb.db)
-  registerProjectRoutes(app, appDb.db)
+  registerAuthRoutes(app, appDb.db, { rateLimiter: authRateLimiter })
+  registerProjectRoutes(app, appDb.db, { rateLimiter: projectsRateLimiter })
   registerProvenanceRoute(
     app,
     (file, filename, signal) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename, signal),

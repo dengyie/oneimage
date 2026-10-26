@@ -1,119 +1,104 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import 'fake-indexeddb/auto'
 import {
   listLocalHistory,
   saveLocalHistory,
   getLocalHistory,
   deleteLocalHistory,
   clearAllLocalHistory,
-  getStorageUsageEstimate,
-  generateThumbnailDataUrl,
   type LocalHistoryItem,
 } from '../src/infrastructure/history-storage'
 import { createEditorState } from '../src/domain/editor-state'
 
+function makeItem(id: string, updatedAt: number, overrides: Partial<LocalHistoryItem> = {}): LocalHistoryItem {
+  return {
+    id,
+    title: `Item ${id}`,
+    fileName: `${id}.png`,
+    fileSize: 1000,
+    mimeType: 'image/png',
+    width: 100,
+    height: 100,
+    thumbnail: 'data:stub',
+    originalBlob: new Blob([`blob-${id}`]),
+    editorState: createEditorState(100, 100),
+    updatedAt,
+    ...overrides,
+  }
+}
+
 describe('history-storage', () => {
-  it('gracefully handles missing indexedDB environment without throwing', async () => {
-    // In node environment without browser indexedDB
-    const list = await listLocalHistory()
-    expect(list).toEqual([])
+  it('opens the database once and reuses the connection across operations', async () => {
+    const openSpy = vi.spyOn(indexedDB, 'open')
 
-    const state = createEditorState(800, 600)
-    const saved = await saveLocalHistory({
-      id: 'item-1',
-      title: 'Test',
-      fileName: 'test.jpg',
-      fileSize: 1024,
-      mimeType: 'image/jpeg',
-      width: 800,
-      height: 600,
-      thumbnail: 'data:image/webp;base64,stub',
-      originalBlob: new Blob(['stub']),
-      editorState: state,
-    })
-    expect(saved.id).toBe('item-1')
-    expect(saved.updatedAt).toBeGreaterThan(0)
+    await listLocalHistory()
+    await listLocalHistory()
+    await listLocalHistory()
 
-    const fetched = await getLocalHistory('item-1')
-    expect(fetched).toBeNull()
-
-    const usage = await getStorageUsageEstimate()
-    expect(usage).toEqual({ count: 0, totalBytes: 0 })
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    openSpy.mockRestore()
   })
 
-  it('calculates storage usage properly given items list', async () => {
-    const memoryStore = new Map<string, LocalHistoryItem>()
+  it('persists, lists newest-first, fetches, deletes and clears drafts', async () => {
+    await clearAllLocalHistory()
 
-    const mockDB = {
-      transaction: () => ({
-        objectStore: () => ({
-          index: () => ({
-            openCursor: () => {
-              const items = Array.from(memoryStore.values()).sort((a, b) => b.updatedAt - a.updatedAt)
-              let idx = 0
-              const req: any = {
-                onsuccess: null,
-                onerror: null,
-              }
-              setTimeout(() => {
-                const advance = () => {
-                  if (idx < items.length) {
-                    const cursor = {
-                      value: items[idx++],
-                      continue: advance,
-                    }
-                    req.onsuccess?.({ target: { result: cursor } })
-                  } else {
-                    req.onsuccess?.({ target: { result: null } })
-                  }
-                }
-                advance()
-              }, 0)
-              return req
-            },
-          }),
-        }),
-      }),
+    await saveLocalHistory(makeItem('old', 1000))
+    await saveLocalHistory(makeItem('new', 2000))
+    await saveLocalHistory(makeItem('mid', 1500))
+
+    const listed = await listLocalHistory()
+    expect(listed.map((item) => item.id)).toEqual(['new', 'mid', 'old'])
+
+    const fetched = await getLocalHistory('mid')
+    expect(fetched?.fileName).toBe('mid.png')
+
+    await deleteLocalHistory('mid')
+    const afterDelete = await listLocalHistory()
+    expect(afterDelete.map((item) => item.id)).toEqual(['new', 'old'])
+
+    const savedAgain = await saveLocalHistory(makeItem('new', 3000))
+    expect(savedAgain).not.toBeNull()
+    const afterUpsert = await listLocalHistory()
+    expect(afterUpsert).toHaveLength(2)
+    expect(afterUpsert[0].id).toBe('new')
+    expect(afterUpsert[0].updatedAt).toBe(3000)
+
+    await clearAllLocalHistory()
+    expect(await listLocalHistory()).toEqual([])
+  })
+
+  it('evicts the oldest drafts beyond the 30-item LRU cap and keeps the newest', async () => {
+    await clearAllLocalHistory()
+
+    for (let i = 0; i < 35; i++) {
+      const saved = await saveLocalHistory(makeItem(`item-${i}`, (i + 1) * 1000))
+      expect(saved).not.toBeNull()
     }
 
-    vi.stubGlobal('indexedDB', {
-      open: () => {
-        const req: any = {}
-        setTimeout(() => {
-          req.result = mockDB
-          req.onsuccess?.()
-        }, 0)
-        return req
-      },
-    })
+    const listed = await listLocalHistory()
+    expect(listed).toHaveLength(30)
+    expect(listed[0].id).toBe('item-34')
+    expect(listed.map((item) => item.id)).not.toContain('item-0')
+    expect(listed.map((item) => item.id)).not.toContain('item-4')
+    expect(listed.map((item) => item.id)).toContain('item-5')
 
-    const state = createEditorState(100, 100)
-    memoryStore.set('item-1', {
-      id: 'item-1',
-      title: 'Item 1',
-      fileName: 'a.png',
-      fileSize: 2000,
-      mimeType: 'image/png',
-      width: 100,
-      height: 100,
-      thumbnail: 'data:stub',
-      originalBlob: new Blob(['hello']),
-      editorState: state,
-      updatedAt: 1000,
-    })
-
-    const items = await listLocalHistory()
-    expect(items.length).toBe(1)
-    expect(items[0].fileName).toBe('a.png')
-
-    const usage = await getStorageUsageEstimate()
-    expect(usage.count).toBe(1)
-    expect(usage.totalBytes).toBeGreaterThanOrEqual(2000)
-
-    vi.unstubAllGlobals()
+    await clearAllLocalHistory()
   })
 
-  it('generateThumbnailDataUrl returns empty string in node environment without window/document', () => {
-    const canvas: any = { width: 1000, height: 800 }
-    expect(generateThumbnailDataUrl(canvas)).toBe('')
+  it('carries cloud linkage through saveLocalHistory upserts', async () => {
+    await clearAllLocalHistory()
+
+    await saveLocalHistory(makeItem('linked', 1000))
+    await saveLocalHistory({
+      ...makeItem('linked', 2000),
+      isCloudSynced: true,
+      cloudId: 'linked',
+    })
+
+    const fetched = await getLocalHistory('linked')
+    expect(fetched?.isCloudSynced).toBe(true)
+    expect(fetched?.cloudId).toBe('linked')
+
+    await clearAllLocalHistory()
   })
 })

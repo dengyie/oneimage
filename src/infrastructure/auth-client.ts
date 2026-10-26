@@ -156,7 +156,3 @@ export async function deleteCloudProject(id: string): Promise<boolean> {
   }
 }
 
-// Aliases for unified naming
-export const getMe = fetchCurrentUser
-export const listCloudProjects = fetchCloudProjects
-

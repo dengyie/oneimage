@@ -17,7 +17,6 @@ import {
 import {
   checkProvenance,
   createProvenanceInput,
-  getPublicCapabilities,
 } from './infrastructure/provenance-client'
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import { CanvasViewport } from './components/editor/CanvasViewport'
@@ -29,19 +28,20 @@ import { AuthModal } from './components/auth/AuthModal'
 import { ProfileModal } from './components/auth/ProfileModal'
 import { HistoryDrawer, type UnifiedHistoryItem } from './components/history/HistoryDrawer'
 import {
-  getMe,
+  fetchCurrentUser,
   logoutUser,
-  listCloudProjects,
+  fetchCloudProjects,
   saveCloudProject,
   deleteCloudProject,
   type SafeUser,
   type CloudProject,
 } from './infrastructure/auth-client'
 import {
-  listHistory,
-  saveHistoryItem,
-  deleteHistoryItem,
-  clearAllHistory,
+  listLocalHistory,
+  saveLocalHistory,
+  getLocalHistory,
+  deleteLocalHistory,
+  clearAllLocalHistory,
   type LocalHistoryItem,
 } from './infrastructure/history-storage'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
@@ -117,7 +117,6 @@ export function App() {
   const [isProcessing, setIsProcessing] = useState(false)
 
   // Provenance state
-  const [, setProvenanceEnabled] = useState(false)
   const [isCheckingProvenance, setIsCheckingProvenance] = useState(false)
   const [provenanceResult, setProvenanceResult] = useState<{ detected: boolean; note?: string } | null>(null)
   const [provenanceResultDetail, setProvenanceResultDetail] = useState<ProvenanceResult | null>(null)
@@ -130,31 +129,21 @@ export function App() {
 
   // Toast feedback
   const [toast, setToast] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
 
   const showToast = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setToast({ text, type })
-    setTimeout(() => setToast(null), 3000)
-  }, [])
-
-  // Check public server capabilities on load
-  useEffect(() => {
-    let active = true
-    void getPublicCapabilities()
-      .then((cap) => {
-        if (active) setProvenanceEnabled(cap.provenance.enabled)
-      })
-      .catch(() => {
-        if (active) setProvenanceEnabled(false)
-      })
-    return () => {
-      active = false
-    }
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, 3000)
   }, [])
 
   // Check current user session on load
   useEffect(() => {
     let active = true
-    void getMe()
+    void fetchCurrentUser()
       .then((user) => {
         if (active && user) {
           setCurrentUser(user)
@@ -171,7 +160,7 @@ export function App() {
   // Refresh local & cloud history
   const refreshHistory = useCallback(async () => {
     try {
-      const locals = await listHistory()
+      const locals = await listLocalHistory()
       setLocalHistoryItems(locals)
     } catch (err: unknown) {
       console.warn('Load local history failed:', err)
@@ -179,7 +168,7 @@ export function App() {
 
     if (currentUser) {
       try {
-        const projects = await listCloudProjects()
+        const projects = await fetchCloudProjects()
         setCloudProjects(projects)
       } catch (err: unknown) {
         console.warn('Load cloud projects failed:', err)
@@ -194,22 +183,28 @@ export function App() {
     void refreshHistory()
   }, [refreshHistory])
 
-  // History operations
+  // History state updates
   const currentState = history?.present || null
 
-  // Save current project state to IndexedDB
-  const persistCurrentDraft = useCallback(
+  // Auto-persist the current draft (debounced) whenever the editor state
+  // changes. One effect owns persistence so commit/undo/redo/revert all flow
+  // through it without side effects inside state updaters.
+  const persistWarnedRef = useRef(false)
+  const pendingPersistRef = useRef<{ file: File; state: EditorState; source: DecodedSource } | null>(null)
+
+  const persistDraftNow = useCallback(
     async (targetFile: File, state: EditorState, source: DecodedSource) => {
+      const draftId = currentDraftIdRef.current
+      if (!draftId) return
       try {
-        const draftId = currentDraftIdRef.current || `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-        currentDraftIdRef.current = draftId
-
+        // IndexedDB put replaces the whole record, so a fresh object would
+        // silently detach the draft from its cloud project and duplicate the
+        // cloud entry on the next sync. Carry the linkage over.
+        const existing = await getLocalHistory(draftId)
         const thumbnail = generateThumbnailFromSource(source, 320)
-        const title = targetFile.name.replace(/\.[^/.]+$/, '')
-
-        await saveHistoryItem({
+        const saved = await saveLocalHistory({
           id: draftId,
-          title,
+          title: targetFile.name.replace(/\.[^/.]+$/, ''),
           fileName: targetFile.name,
           fileSize: targetFile.size,
           mimeType: targetFile.type || 'image/jpeg',
@@ -219,17 +214,70 @@ export function App() {
           originalBlob: targetFile,
           editorState: state,
           updatedAt: Date.now(),
+          isCloudSynced: existing?.isCloudSynced,
+          cloudId: existing?.cloudId,
         })
 
-        // Refresh local items
-        const locals = await listHistory()
+        if (saved === null) {
+          if (!persistWarnedRef.current) {
+            persistWarnedRef.current = true
+            showToast('本地草稿保存失败（浏览器存储空间不足），请及时导出保留成果', 'error')
+          }
+          return
+        }
+
+        const locals = await listLocalHistory()
         setLocalHistoryItems(locals)
       } catch (err) {
         console.warn('Auto-save to IndexedDB skipped:', err)
+        if (!persistWarnedRef.current) {
+          persistWarnedRef.current = true
+          showToast('本地草稿保存失败，请及时导出保留成果', 'error')
+        }
       }
     },
-    []
+    [showToast]
   )
+
+  useEffect(() => {
+    const state = history?.present
+    if (!file || !decodedSource || !state) return
+    pendingPersistRef.current = { file, state, source: decodedSource }
+    const timer = window.setTimeout(() => {
+      const pending = pendingPersistRef.current
+      if (!pending) return
+      pendingPersistRef.current = null
+      void persistDraftNow(pending.file, pending.state, pending.source)
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [file, decodedSource, history?.present, persistDraftNow])
+
+  // Flush a pending debounced save before the page goes away, so a quick edit
+  // followed by a tab close still lands in IndexedDB.
+  const flushPendingPersist = useCallback(() => {
+    const pending = pendingPersistRef.current
+    if (!pending) return
+    pendingPersistRef.current = null
+    void persistDraftNow(pending.file, pending.state, pending.source)
+  }, [persistDraftNow])
+
+  useEffect(() => {
+    const flush = () => {
+      const pending = pendingPersistRef.current
+      if (!pending) return
+      pendingPersistRef.current = null
+      void persistDraftNow(pending.file, pending.state, pending.source)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [persistDraftNow])
 
   // Load and decode an image file
   const loadFile = useCallback(
@@ -269,8 +317,7 @@ export function App() {
         setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
         setPanOffset({ x: 0, y: 0 })
 
-        // Auto-save initial draft into IndexedDB
-        void persistCurrentDraft(nextFile, initial, decoded)
+        // Auto-save of the initial draft is owned by the persistence effect.
 
         showToast(`已载入 ${nextFile.name}，完全在本地处理`, 'success')
       } catch (err) {
@@ -281,7 +328,7 @@ export function App() {
         setIsProcessing(false)
       }
     },
-    [decodedSource, showToast, persistCurrentDraft]
+    [decodedSource, showToast]
   )
 
   // History state updates
@@ -289,43 +336,24 @@ export function App() {
     setHistory((prev) => (prev ? { ...prev, present: nextState } : null))
   }, [])
 
-  const handleCommitHistory = useCallback(
-    (nextState: EditorState) => {
-      setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
-      if (file && decodedSource) {
-        void persistCurrentDraft(file, nextState, decodedSource)
-      }
-    },
-    [file, decodedSource, persistCurrentDraft]
-  )
+  const handleCommitHistory = useCallback((nextState: EditorState) => {
+    setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
+  }, [])
 
   const handleUndo = useCallback(() => {
-    setHistory((prev) => {
-      const next = prev ? undoHistory(prev) : null
-      if (next && file && decodedSource) {
-        void persistCurrentDraft(file, next.present, decodedSource)
-      }
-      return next
-    })
-  }, [file, decodedSource, persistCurrentDraft])
+    setHistory((prev) => (prev ? undoHistory(prev) : null))
+  }, [])
 
   const handleRedo = useCallback(() => {
-    setHistory((prev) => {
-      const next = prev ? redoHistory(prev) : null
-      if (next && file && decodedSource) {
-        void persistCurrentDraft(file, next.present, decodedSource)
-      }
-      return next
-    })
-  }, [file, decodedSource, persistCurrentDraft])
+    setHistory((prev) => (prev ? redoHistory(prev) : null))
+  }, [])
 
   const handleRevert = useCallback(() => {
     if (!decodedSource || !file) return
     const initial = createEditorState(decodedSource.width, decodedSource.height)
     setHistory((prev) => (prev ? pushHistory(prev, initial) : null))
-    void persistCurrentDraft(file, initial, decodedSource)
     showToast('已还原为原始状态', 'info')
-  }, [decodedSource, file, persistCurrentDraft, showToast])
+  }, [decodedSource, file, showToast])
 
   // Crop controls
   const handleRatioSelect = useCallback(
@@ -424,8 +452,6 @@ export function App() {
       document.body.removeChild(a)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
 
-      // Also persist to history
-      void persistCurrentDraft(file, currentState, decodedSource)
       showToast(`已导出并下载：${filename}`, 'success')
     } catch (err) {
       console.error('Export failed:', err)
@@ -433,7 +459,7 @@ export function App() {
     } finally {
       setIsProcessing(false)
     }
-  }, [file, decodedSource, currentState, exportImage, outputMime, quality, persistCurrentDraft, showToast])
+  }, [file, decodedSource, currentState, exportImage, outputMime, quality, showToast])
 
   const handleExportFormat = useCallback(
     async (mime: string) => {
@@ -760,11 +786,14 @@ export function App() {
         })
 
         if (savedProject) {
-          await saveHistoryItem({
+          const updated = await saveLocalHistory({
             ...localItem,
             isCloudSynced: true,
             cloudId: savedProject.id,
           })
+          if (updated === null) {
+            console.warn('Cloud sync succeeded but local linkage update failed')
+          }
           await refreshHistory()
           showToast(`已同步「${localItem.title}」至云端项目`, 'success')
         } else {
@@ -783,7 +812,7 @@ export function App() {
     async (item: UnifiedHistoryItem) => {
       try {
         if (item.localItem) {
-          await deleteHistoryItem(item.localItem.id)
+          await deleteLocalHistory(item.localItem.id)
         }
         if (item.cloudItem) {
           await deleteCloudProject(item.cloudItem.id)
@@ -801,7 +830,7 @@ export function App() {
   // Clear all local drafts
   const handleClearAllLocal = useCallback(async () => {
     try {
-      await clearAllHistory()
+      await clearAllLocalHistory()
       await refreshHistory()
       showToast('已清空全部本地历史草稿', 'success')
     } catch (err) {
@@ -871,7 +900,10 @@ export function App() {
         else if (e.code === 'KeyF') setActiveTool((prev) => (prev === 'adjust' ? 'none' : 'adjust'))
         else if (e.code === 'KeyW') setActiveTool((prev) => (prev === 'watermark' ? 'none' : 'watermark'))
         else if (e.code === 'KeyO') setActiveTool((prev) => (prev === 'compress' ? 'none' : 'compress'))
-        else if (e.code === 'KeyH') setShowHistoryDrawer((v) => !v)
+        else if (e.code === 'KeyH') {
+        flushPendingPersist()
+        setShowHistoryDrawer((v) => !v)
+      }
         else if (e.code === 'Backslash') setIsComparingOriginal(true)
         else if (e.code === 'Escape') setActiveTool('none')
       }
@@ -889,7 +921,7 @@ export function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [file, handleUndo, handleRedo, handleCopyToClipboard, handleQuickExport])
+    }, [file, handleUndo, handleRedo, handleCopyToClipboard, handleQuickExport, flushPendingPersist])
 
   // Global Paste listener (Cmd+V)
   useEffect(() => {
@@ -923,8 +955,16 @@ export function App() {
       {/* Floating Top-Right User & History Navigation Capsule */}
       <UserNavCapsule
         user={currentUser}
-        historyCount={localHistoryItems.length + cloudProjects.length}
-        onOpenHistory={() => setShowHistoryDrawer(true)}
+        historyCount={
+          localHistoryItems.length +
+          cloudProjects.filter(
+            (c) => !localHistoryItems.some((l) => l.id === c.id || l.cloudId === c.id)
+          ).length
+        }
+        onOpenHistory={() => {
+          flushPendingPersist()
+          setShowHistoryDrawer(true)
+        }}
         onOpenAuth={() => setShowAuthModal(true)}
         onOpenProfile={() => setShowProfileModal(true)}
         onLogout={handleLogout}
@@ -1086,6 +1126,7 @@ export function App() {
         onDeleteItem={(item) => void handleDeleteUnifiedItem(item)}
         onClearAllLocal={() => void handleClearAllLocal()}
         onOpenAuth={() => {
+          flushPendingPersist()
           setShowHistoryDrawer(false)
           setShowAuthModal(true)
         }}
@@ -1096,8 +1137,9 @@ export function App() {
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onSuccess={(user) => {
+          // refreshHistory is owned by the effect watching currentUser; calling
+          // it here would run a stale closure and duplicate the refresh.
           setCurrentUser(user)
-          void refreshHistory()
           showToast(`欢迎回来，${user.nickname || user.username}！`, 'success')
         }}
       />

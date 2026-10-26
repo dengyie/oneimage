@@ -5,10 +5,12 @@ import {
   createSession,
   createUser,
   deleteSession,
+  purgeExpiredSessions,
   updateUserProfile,
   validateSession,
   type SafeUser,
 } from './auth'
+import type { RateLimiter } from './rate-limit'
 
 export function extractSessionToken(request: FastifyRequest): string | null {
   const authHeader = request.headers.authorization
@@ -23,11 +25,39 @@ export function extractSessionToken(request: FastifyRequest): string | null {
   return null
 }
 
-export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync): void {
+function setSessionCookie(reply: FastifyReply, token: string): void {
+  reply.header(
+    'Set-Cookie',
+    `oneimage_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
+  )
+}
+
+export interface AuthRoutesOptions {
+  // Throttles the scrypt-backed endpoints (register/login): these are the only
+  // public paths whose per-request CPU cost can be weaponized, and they are the
+  // brute-force surface for credentials.
+  rateLimiter?: RateLimiter
+}
+
+export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, options: AuthRoutesOptions = {}): void {
+  const rateLimiter = options.rateLimiter
+
+  const denyWhenOverLimit = (request: FastifyRequest, reply: FastifyReply): boolean => {
+    if (rateLimiter && !rateLimiter.allow(request)) {
+      void reply.header('Retry-After', '60').status(429).send({
+        error: 'rate_limited',
+        message: '请求过于频繁，请稍后再试',
+      })
+      return true
+    }
+    return false
+  }
+
   // Register
   app.post('/api/v1/auth/register', async (request: FastifyRequest<{
     Body: { username?: string; email?: string; password?: string; nickname?: string }
   }>, reply: FastifyReply) => {
+    if (denyWhenOverLimit(request, reply)) return
     const { username, email, password, nickname } = request.body || {}
 
     if (!username || !email || !password) {
@@ -68,12 +98,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync): void
         password,
         nickname,
       })
+      purgeExpiredSessions(db)
       const session = createSession(db, user.id)
 
-      reply.header(
-        'Set-Cookie',
-        `oneimage_session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
-      )
+      setSessionCookie(reply, session.token)
       return reply.status(201).send({
         user,
         sessionToken: session.token,
@@ -94,6 +122,8 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync): void
   app.post('/api/v1/auth/login', async (request: FastifyRequest<{
     Body: { account?: string; password?: string }
   }>, reply: FastifyReply) => {
+    if (denyWhenOverLimit(request, reply)) return
+
     const { account, password } = request.body || {}
 
     if (!account || !password) {
@@ -111,11 +141,9 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync): void
       })
     }
 
+    purgeExpiredSessions(db)
     const session = createSession(db, user.id)
-    reply.header(
-      'Set-Cookie',
-      `oneimage_session=${session.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
-    )
+    setSessionCookie(reply, session.token)
     return reply.status(200).send({
       user,
       sessionToken: session.token,
@@ -130,7 +158,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync): void
     }
     reply.header(
       'Set-Cookie',
-      'oneimage_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'
+      'oneimage_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0'
     )
     return reply.status(200).send({ ok: true })
   })

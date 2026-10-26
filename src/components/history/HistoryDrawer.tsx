@@ -70,11 +70,16 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   const [activeTab, setActiveTab] = useState<'all' | 'local' | 'cloud'>('all')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Merge into unified list
+  // Merge into unified list: a local draft linked to a cloud project (cloud id
+  // equals the local draft id in the sync flow) collapses into one entry
+  // carrying both sides; unmatched entries stay single-sided.
   const unifiedList = useMemo<UnifiedHistoryItem[]>(() => {
     const list: UnifiedHistoryItem[] = []
 
     for (const item of localItems) {
+      const cloudMatch = cloudItems.find(
+        (project) => project.id === item.cloudId || project.id === item.id
+      )
       list.push({
         id: item.id,
         source: 'local',
@@ -83,14 +88,18 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
         fileSize: item.fileSize,
         dimensions: { width: item.width, height: item.height },
         thumbnail: item.thumbnail,
-        updatedAt: item.updatedAt,
+        updatedAt: Math.max(item.updatedAt, cloudMatch?.updated_at || 0),
         originalBlob: item.originalBlob,
         localItem: item,
+        cloudItem: cloudMatch,
       })
     }
 
     for (const project of cloudItems) {
-      // avoid duplicates if already loaded locally and mapped
+      const alreadyMerged = list.some(
+        (entry) => entry.cloudItem?.id === project.id || entry.localItem?.id === project.id
+      )
+      if (alreadyMerged) continue
       list.push({
         id: project.id,
         source: 'cloud',
@@ -109,11 +118,12 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
     return list
   }, [localItems, cloudItems])
 
-  // Filtered by tab and search
+  // Filtered by tab and search. Tabs reflect which sides an entry has, so a
+  // merged local+cloud draft shows up under both filters.
   const filteredList = useMemo(() => {
     return unifiedList.filter((item) => {
-      if (activeTab === 'local' && item.source !== 'local') return false
-      if (activeTab === 'cloud' && item.source !== 'cloud') return false
+      if (activeTab === 'local' && !item.localItem) return false
+      if (activeTab === 'cloud' && !item.cloudItem) return false
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase()
         return (
@@ -258,12 +268,14 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       <span className="font-medium text-xs text-zinc-100 truncate">{item.title}</span>
                       <span
                         className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono shrink-0 ${
-                          item.source === 'cloud'
-                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          item.localItem && item.cloudItem
+                            ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                            : item.cloudItem
+                              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         }`}
                       >
-                        {item.source === 'cloud' ? '云端' : '本地'}
+                        {item.localItem && item.cloudItem ? '已同步' : item.cloudItem ? '云端' : '本地'}
                       </span>
                     </div>
                     <div className="text-[10px] text-zinc-400 truncate mt-0.5">{item.fileName}</div>
@@ -287,17 +299,18 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     >
                       继续编辑
                     </button>
-                    {item.source === 'local' && (
+                    {item.localItem && (
                       <button
                         onClick={() => {
+                          if (!item.localItem) return
                           if (!user) {
                             onOpenAuth()
-                          } else if (item.localItem) {
+                          } else {
                             onSyncToCloud(item.localItem)
                           }
                         }}
                         className="p-1 rounded-lg text-zinc-400 hover:text-blue-400 hover:bg-white/5 transition-colors"
-                        title={user ? '同步至云端' : '登录后同步至云端'}
+                        title={user ? (item.cloudItem ? '更新云端草稿' : '同步至云端') : '登录后同步至云端'}
                       >
                         <UiIcon name="cloud" size={14} />
                       </button>
@@ -310,7 +323,18 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       <UiIcon name="download" size={14} />
                     </button>
                     <button
-                      onClick={() => onDeleteItem(item)}
+                      onClick={() => {
+                        // A cloud draft holds the only surviving copy of the
+                        // edit state when the original device is gone; never
+                        // destroy that with a single mis-click.
+                        if (item.cloudItem) {
+                          const scope = item.localItem ? '本地与云端副本' : '云端副本（当前浏览器无本地原图，删除后无法恢复）'
+                          if (!window.confirm(`确认删除草稿「${item.title}」？将同时移除${scope}。`)) {
+                            return
+                          }
+                        }
+                        onDeleteItem(item)
+                      }}
                       className="p-1 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors ml-auto"
                       title="删除记录"
                     >

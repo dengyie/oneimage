@@ -1,6 +1,7 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import type { UserRow, SessionRow } from './db'
+import { AVATAR_COLORS, DEFAULT_AVATAR_COLOR, isAvatarColor } from '../src/domain/avatar'
 
 export interface SafeUser {
   id: string
@@ -12,20 +13,15 @@ export interface SafeUser {
   updated_at: number
 }
 
-const DEFAULT_AVATARS = [
-  '#10b981', // emerald
-  '#3b82f6', // blue
-  '#8b5cf6', // purple
-  '#ec4899', // pink
-  '#f59e0b', // amber
-  '#06b6d4', // cyan
-  '#6366f1', // indigo
-  '#14b8a6', // teal
-]
-
 function getRandomAvatarColor(): string {
-  const idx = Math.floor(Math.random() * DEFAULT_AVATARS.length)
-  return DEFAULT_AVATARS[idx]
+  const idx = Math.floor(Math.random() * AVATAR_COLORS.length)
+  return AVATAR_COLORS[idx]
+}
+
+// Session tokens are stored hashed so a leaked database file does not yield
+// usable credentials; only the SHA-256 digest of the token is persisted.
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
 }
 
 export function hashPassword(password: string, salt: string): string {
@@ -96,7 +92,12 @@ export function authenticateUser(
     SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1
   `)
   const row = stmt.get(cleanAccount, cleanAccount) as unknown as UserRow | undefined
-  if (!row) return null
+  if (!row) {
+    // Burn one scrypt run even for unknown accounts so response timing does
+    // not reveal whether a username/email is registered.
+    hashPassword(password, 'oneimage-timing-equalizer')
+    return null
+  }
 
   if (!verifyPassword(password, String(row.salt), String(row.password_hash))) {
     return null
@@ -118,7 +119,7 @@ export function createSession(
     INSERT INTO sessions (token, user_id, expires_at, created_at)
     VALUES (?, ?, ?, ?)
   `)
-  stmt.run(token, userId, expiresAt, now)
+  stmt.run(hashToken(token), userId, expiresAt, now)
 
   return {
     token,
@@ -139,7 +140,7 @@ export function validateSession(
     WHERE s.token = ? AND s.expires_at > ?
     LIMIT 1
   `)
-  const row = stmt.get(token, now) as unknown as UserRow | undefined
+  const row = stmt.get(hashToken(token), now) as unknown as UserRow | undefined
   if (!row) return null
 
   return toSafeUser(row)
@@ -147,7 +148,11 @@ export function validateSession(
 
 export function deleteSession(db: DatabaseSync, token: string): void {
   const stmt = db.prepare('DELETE FROM sessions WHERE token = ?')
-  stmt.run(token)
+  stmt.run(hashToken(token))
+}
+
+export function purgeExpiredSessions(db: DatabaseSync): void {
+  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now())
 }
 
 export function updateUserProfile(
@@ -161,9 +166,10 @@ export function updateUserProfile(
   if (!current) return null
 
   const currentNickname = String(current.nickname || current.username)
-  const currentAvatarColor = String(current.avatar_color || '#10b981')
+  const currentAvatarColor = isAvatarColor(current.avatar_color) ? current.avatar_color : DEFAULT_AVATAR_COLOR
   const nextNickname = (updates.nickname !== undefined ? updates.nickname.trim() : currentNickname).slice(0, 32)
-  const nextAvatarColor = updates.avatar_color || currentAvatarColor
+  // Invalid or missing colors keep the stored value instead of corrupting it.
+  const nextAvatarColor = isAvatarColor(updates.avatar_color) ? updates.avatar_color : currentAvatarColor
 
   const updateStmt = db.prepare(`
     UPDATE users SET nickname = ?, avatar_color = ?, updated_at = ? WHERE id = ?

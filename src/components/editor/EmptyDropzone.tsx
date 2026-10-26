@@ -11,7 +11,6 @@ export interface RecentItemPreview {
 
 interface EmptyDropzoneProps {
   onFileSelect: (file: File) => void
-  onPasteText?: () => void
   error?: string | null
   recentItems?: RecentItemPreview[]
   onSelectRecent?: (id: string) => void

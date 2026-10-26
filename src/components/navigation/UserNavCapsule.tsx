@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { UiIcon } from '../ui/UiIcon'
 import type { SafeUser } from '../../infrastructure/auth-client'
+import { DEFAULT_AVATAR_COLOR } from '../../domain/avatar'
 
 interface UserNavCapsuleProps {
   user: SafeUser | null
@@ -47,7 +48,7 @@ export const UserNavCapsule: React.FC<UserNavCapsuleProps> = ({
           >
             <div
               className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white shadow-sm"
-              style={{ backgroundColor: user.avatar_color || '#10b981' }}
+              style={{ backgroundColor: user.avatar_color || DEFAULT_AVATAR_COLOR }}
             >
               {(user.nickname || user.username).slice(0, 1).toUpperCase()}
             </div>

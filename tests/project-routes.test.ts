@@ -32,6 +32,81 @@ describe('Project routes', () => {
     appDb.close()
   })
 
+  it('rejects invalid payloads with 400 and cross-user project ids with 409', async () => {
+    const { app, appDb } = createTestApp()
+
+    const regA = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { username: 'owner_a', email: 'oa@example.com', password: 'password123' },
+    })
+    const tokenA = JSON.parse(regA.body).sessionToken
+
+    const regB = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { username: 'owner_b', email: 'ob@example.com', password: 'password123' },
+    })
+    const tokenB = JSON.parse(regB.body).sessionToken
+
+    // Missing required fields
+    const missingRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: { title: 'Only a title' },
+    })
+    expect(missingRes.statusCode).toBe(400)
+    expect(JSON.parse(missingRes.body).error).toBe('missing_fields')
+
+    // User A saves a project with a server-accepted id
+    const saveRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        id: 'proj_owned_by_a',
+        title: 'A 的项目',
+        original_filename: 'a.jpg',
+        dimensions_width: 10,
+        dimensions_height: 10,
+        thumbnail_data: 'data:stub',
+        state_json: '{}',
+      },
+    })
+    expect(saveRes.statusCode).toBe(200)
+
+    // User B tries to claim the same id: contract error, not a raw 500.
+    const conflictRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/projects',
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: {
+        id: 'proj_owned_by_a',
+        title: 'B 的抢注',
+        original_filename: 'b.jpg',
+        dimensions_width: 10,
+        dimensions_height: 10,
+        thumbnail_data: 'data:stub',
+        state_json: '{}',
+      },
+    })
+    expect(conflictRes.statusCode).toBe(409)
+    expect(JSON.parse(conflictRes.body).error).toBe('project_conflict')
+
+    // A's project must be untouched.
+    const listA = await app.inject({
+      method: 'GET',
+      url: '/api/v1/projects',
+      headers: { authorization: `Bearer ${tokenA}` },
+    })
+    const projectsA = JSON.parse(listA.body).projects
+    expect(projectsA).toHaveLength(1)
+    expect(projectsA[0].title).toBe('A 的项目')
+
+    appDb.close()
+  })
+
   it('allows user to save, list, update, and delete cloud projects with tenant isolation', async () => {
     const { app, appDb } = createTestApp()
 

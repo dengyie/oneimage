@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { UiIcon } from '../ui/UiIcon'
 import { updateUserProfile, type SafeUser } from '../../infrastructure/auth-client'
+import { AVATAR_COLORS, DEFAULT_AVATAR_COLOR } from '../../domain/avatar'
 
 interface ProfileModalProps {
   isOpen: boolean
@@ -12,18 +13,6 @@ interface ProfileModalProps {
   onLogout: () => void
 }
 
-const AVATAR_COLORS = [
-  '#10b981', // emerald
-  '#3b82f6', // blue
-  '#8b5cf6', // purple
-  '#ec4899', // pink
-  '#f59e0b', // amber
-  '#06b6d4', // cyan
-  '#6366f1', // indigo
-  '#14b8a6', // teal
-  '#f43f5e', // rose
-]
-
 export const ProfileModal: React.FC<ProfileModalProps> = ({
   isOpen,
   user,
@@ -33,10 +22,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onUserUpdated,
   onLogout,
 }) => {
-  const [nickname, setNickname] = useState(user?.nickname || '')
-  const [avatarColor, setAvatarColor] = useState(user?.avatar_color || '#10b981')
+  const [nickname, setNickname] = useState('')
+  const [avatarColor, setAvatarColor] = useState<string>(DEFAULT_AVATAR_COLOR)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+
+  // The modal stays mounted across open/close, so the form must re-sync with
+  // the current profile every time it is opened — a useState initializer runs
+  // only once and would silently reset the saved avatar color on save.
+  useEffect(() => {
+    if (isOpen && user) {
+      setNickname(user.nickname || '')
+      setAvatarColor(user.avatar_color || DEFAULT_AVATAR_COLOR)
+      setMessage(null)
+    }
+  }, [isOpen, user])
 
   if (!isOpen || !user) return null
 
