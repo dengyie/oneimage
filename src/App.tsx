@@ -951,6 +951,7 @@ export function App() {
       {/* Floating Top-Right User & History Navigation Capsule */}
       <UserNavCapsule
         user={currentUser}
+        belowTopBar={Boolean(file && decodedSource)}
         historyCount={
           localHistoryItems.length +
           cloudProjects.filter(

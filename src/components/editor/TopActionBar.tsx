@@ -66,24 +66,24 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
   }
 
   return (
-    <header className="fixed top-3 left-1/2 -translate-x-1/2 z-40 max-w-[95vw] flex items-center gap-1 sm:gap-2 px-3 py-1.5 rounded-full bg-zinc-900/85 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/60 text-xs text-zinc-300 transition-all select-none">
+    <header className="fixed top-14 sm:top-3 inset-x-0 z-40 mx-auto flex w-fit max-w-[calc(100vw-1rem)] items-center gap-1 whitespace-nowrap px-3 py-1.5 rounded-full bg-zinc-900/85 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/60 text-xs text-zinc-300 transition-all select-none sm:gap-2">
       {/* File info pill */}
-      <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-zinc-800/60 border border-zinc-700/40 text-[11px] text-zinc-400 font-mono">
-        <span className="max-w-[100px] truncate text-zinc-200" title={fileName}>
+      <div className="hidden sm:flex min-w-0 items-center gap-1.5 px-2 py-1 rounded-full bg-zinc-800/60 border border-zinc-700/40 text-[11px] text-zinc-400 font-mono">
+        <span className="max-w-[120px] lg:max-w-[220px] truncate text-zinc-200" title={fileName}>
           {fileName}
         </span>
-        <span className="text-zinc-600">·</span>
-        <span>
+        <span className="shrink-0 text-zinc-600">·</span>
+        <span className="shrink-0">
           {dimensions.width}×{dimensions.height}
         </span>
-        <span className="text-zinc-600">·</span>
-        <span>{formatSize(fileSize)}</span>
+        <span className="shrink-0 text-zinc-600">·</span>
+        <span className="shrink-0">{formatSize(fileSize)}</span>
       </div>
 
-      <div className="w-px h-4 bg-zinc-800 mx-0.5" />
+      <div className="hidden sm:block w-px h-4 bg-zinc-800 mx-0.5 shrink-0" />
 
       {/* History buttons */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5">
         <button
           onClick={onUndo}
           disabled={!canUndo}
@@ -110,7 +110,7 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
         </button>
       </div>
 
-      <div className="w-px h-4 bg-zinc-800 mx-0.5" />
+      <div className="w-px h-4 bg-zinc-800 mx-0.5 shrink-0" />
 
       {/* Compare original */}
       <button
@@ -121,20 +121,20 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
         onTouchEnd={onCompareEnd}
         onTouchCancel={onCompareEnd}
         title="按住查看原图 (\ 键)"
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-full transition-all text-[11px] ${
+        className={`flex shrink-0 items-center gap-1 px-2.5 py-1 rounded-full transition-all text-[11px] ${
           isComparingOriginal
             ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-inner'
             : 'bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-transparent'
         }`}
       >
         <UiIcon name="eye" size={13} />
-        <span className="hidden sm:inline">原图对比</span>
+        <span className="hidden md:inline">原图对比</span>
       </button>
 
-      <div className="w-px h-4 bg-zinc-800 mx-0.5" />
+      <div className="w-px h-4 bg-zinc-800 mx-0.5 shrink-0" />
 
       {/* Zoom controls */}
-      <div className="flex items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5">
         <button
           onClick={onZoomOut}
           title="缩小 (滚轮下滑)"
@@ -158,20 +158,20 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
         </button>
       </div>
 
-      <div className="w-px h-4 bg-zinc-800 mx-0.5" />
+      <div className="hidden md:block w-px h-4 bg-zinc-800 mx-0.5 shrink-0" />
 
       {/* Replace image */}
       <button
         onClick={onReplaceImage}
         title="更换图片"
-        className="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-[11px] transition-colors"
+        className="hidden md:flex shrink-0 items-center gap-1 px-2.5 py-1 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-[11px] transition-colors"
       >
         <UiIcon name="image" size={13} />
         <span>换图</span>
       </button>
 
       {/* Quick Export CTA & Split Dropdown */}
-      <div className="relative flex items-center" ref={menuRef}>
+      <div className="relative flex shrink-0 items-center" ref={menuRef}>
         <button
           onClick={onQuickExport}
           disabled={isProcessing}

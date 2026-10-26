@@ -27,7 +27,7 @@ export const CropSubToolbar: React.FC<CropSubToolbarProps> = ({
   onResetCrop,
 }) => {
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
+    <div className="flex max-w-full items-center overflow-x-auto whitespace-nowrap [&>*]:shrink-0 gap-1.5 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
       {/* Ratio pills */}
       <div className="flex items-center gap-1">
         {RATIO_PRESETS.map((p) => (

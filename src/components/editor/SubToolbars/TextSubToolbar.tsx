@@ -42,7 +42,7 @@ export const TextSubToolbar: React.FC<TextSubToolbarProps> = ({
   onSizeSelect,
 }) => {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
+    <div className="flex max-w-full items-center overflow-x-auto whitespace-nowrap [&>*]:shrink-0 gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
       {/* Background pill styles */}
       <div className="flex items-center gap-1">
         {STYLES.map((s) => (

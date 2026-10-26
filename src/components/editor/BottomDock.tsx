@@ -128,9 +128,9 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onCheckProvenance,
 }) => {
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 select-none pointer-events-none">
+    <div className="fixed inset-x-0 bottom-6 z-40 flex flex-col items-center gap-2 px-2 select-none pointer-events-none">
       {/* Contextual Sub-Toolbar (Floating directly above the dock) */}
-      <div className="pointer-events-auto transition-all duration-200">
+      <div className="pointer-events-auto max-w-full transition-all duration-200">
         {activeTool === 'crop' && (
           <CropSubToolbar
             currentRatio={cropRatio}
@@ -204,23 +204,24 @@ export const BottomDock: React.FC<BottomDockProps> = ({
       </div>
 
       {/* Main WeChat / QQ Style Capsule Dock */}
-      <nav className="pointer-events-auto flex items-center gap-1 sm:gap-2 px-3 py-2 rounded-full bg-zinc-900/85 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/80 text-xs text-zinc-300">
+      <nav className="pointer-events-auto flex max-w-full items-center gap-1 sm:gap-2 px-3 py-2 rounded-full bg-zinc-900/85 backdrop-blur-2xl border border-white/10 shadow-2xl shadow-black/80 text-xs text-zinc-300">
         {TOOLS.map((t) => {
           const isActive = activeTool === t.id
           return (
             <button
               key={t.id}
               onClick={() => onToolSelect(isActive ? 'none' : t.id)}
-              className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-xs ${
+              title={t.label}
+              className={`group relative flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-xs ${
                 isActive
                   ? 'bg-emerald-500 text-zinc-950 font-medium shadow-lg shadow-emerald-500/30 scale-105'
                   : 'hover:bg-zinc-800/80 text-zinc-400 hover:text-zinc-100'
               }`}
             >
               <UiIcon name={t.icon} size={16} strokeWidth={isActive ? 2.2 : 1.8} />
-              <span className="font-medium">{t.label}</span>
+              <span className="hidden whitespace-nowrap font-medium lg:inline">{t.label}</span>
               <kbd
-                className={`hidden sm:inline-block text-[10px] font-mono px-1 rounded transition-colors ${
+                className={`hidden lg:inline-block text-[10px] font-mono px-1 rounded transition-colors ${
                   isActive ? 'bg-zinc-950/20 text-zinc-950' : 'text-zinc-500 group-hover:text-zinc-400'
                 }`}
               >

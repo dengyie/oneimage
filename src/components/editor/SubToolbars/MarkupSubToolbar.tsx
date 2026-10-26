@@ -46,7 +46,7 @@ export const MarkupSubToolbar: React.FC<MarkupSubToolbarProps> = ({
   onWidthSelect,
 }) => {
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
+    <div className="flex max-w-full items-center overflow-x-auto whitespace-nowrap [&>*]:shrink-0 gap-2 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
       {/* Submode toggles */}
       <div className="flex items-center gap-0.5">
         {MODES.map((m) => (

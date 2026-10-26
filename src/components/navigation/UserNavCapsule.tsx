@@ -6,6 +6,7 @@ import { DEFAULT_AVATAR_COLOR } from '../../domain/avatar'
 interface UserNavCapsuleProps {
   user: SafeUser | null
   historyCount: number
+  belowTopBar?: boolean
   onOpenHistory: () => void
   onOpenAuth: () => void
   onOpenProfile: () => void
@@ -15,6 +16,7 @@ interface UserNavCapsuleProps {
 export const UserNavCapsule: React.FC<UserNavCapsuleProps> = ({
   user,
   historyCount,
+  belowTopBar = false,
   onOpenHistory,
   onOpenAuth,
   onOpenProfile,
@@ -23,7 +25,11 @@ export const UserNavCapsule: React.FC<UserNavCapsuleProps> = ({
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
-    <div className="fixed top-3 right-4 sm:right-6 z-40 flex items-center gap-2 select-none">
+    <div
+      className={`fixed right-4 z-40 flex items-center gap-2 select-none sm:right-6 ${
+        belowTopBar ? 'top-3 sm:top-[4.5rem]' : 'top-3'
+      }`}
+    >
       {/* History Button */}
       <button
         onClick={onOpenHistory}
