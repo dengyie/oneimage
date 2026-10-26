@@ -18,17 +18,52 @@ import {
   checkProvenance,
   createProvenanceInput,
   getPublicCapabilities,
-  isProvenanceMimeSupported,
 } from './infrastructure/provenance-client'
 import type { ProvenanceResult } from './infrastructure/openai-provenance-adapter'
 import { CanvasViewport } from './components/editor/CanvasViewport'
 import { TopActionBar } from './components/editor/TopActionBar'
 import { BottomDock, type ActiveTool } from './components/editor/BottomDock'
 import { EmptyDropzone } from './components/editor/EmptyDropzone'
+import { UserNavCapsule } from './components/navigation/UserNavCapsule'
+import { AuthModal } from './components/auth/AuthModal'
+import { ProfileModal } from './components/auth/ProfileModal'
+import { HistoryDrawer, type UnifiedHistoryItem } from './components/history/HistoryDrawer'
+import {
+  getMe,
+  logoutUser,
+  listCloudProjects,
+  saveCloudProject,
+  deleteCloudProject,
+  type SafeUser,
+  type CloudProject,
+} from './infrastructure/auth-client'
+import {
+  listHistory,
+  saveHistoryItem,
+  deleteHistoryItem,
+  clearAllHistory,
+  type LocalHistoryItem,
+} from './infrastructure/history-storage'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
 import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
 import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
 import './styles.css'
+
+function generateThumbnailFromSource(source: DecodedSource, maxEdge = 320): string {
+  if (typeof document === 'undefined') return ''
+  const scale = Math.min(1, maxEdge / Math.max(source.width, source.height))
+  const thumbW = Math.max(16, Math.round(source.width * scale))
+  const thumbH = Math.max(16, Math.round(source.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = thumbW
+  canvas.height = thumbH
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'medium'
+  source.draw(ctx, thumbW, thumbH)
+  return canvas.toDataURL('image/webp', 0.8)
+}
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -41,6 +76,17 @@ export function App() {
 
   // Editor Domain History
   const [history, setHistory] = useState<EditorHistory | null>(null)
+  const currentDraftIdRef = useRef<string | null>(null)
+
+  // Active User & Auth State
+  const [currentUser, setCurrentUser] = useState<SafeUser | null>(null)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
+
+  // History & Storage State
+  const [localHistoryItems, setLocalHistoryItems] = useState<LocalHistoryItem[]>([])
+  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
 
   // Cleanup decoded bitmap on unmount
   useEffect(() => {
@@ -71,7 +117,7 @@ export function App() {
   const [isProcessing, setIsProcessing] = useState(false)
 
   // Provenance state
-  const [provenanceEnabled, setProvenanceEnabled] = useState(false)
+  const [, setProvenanceEnabled] = useState(false)
   const [isCheckingProvenance, setIsCheckingProvenance] = useState(false)
   const [provenanceResult, setProvenanceResult] = useState<{ detected: boolean; note?: string } | null>(null)
   const [provenanceResultDetail, setProvenanceResultDetail] = useState<ProvenanceResult | null>(null)
@@ -105,6 +151,86 @@ export function App() {
     }
   }, [])
 
+  // Check current user session on load
+  useEffect(() => {
+    let active = true
+    void getMe()
+      .then((user) => {
+        if (active && user) {
+          setCurrentUser(user)
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('Session check skipped:', err)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Refresh local & cloud history
+  const refreshHistory = useCallback(async () => {
+    try {
+      const locals = await listHistory()
+      setLocalHistoryItems(locals)
+    } catch (err: unknown) {
+      console.warn('Load local history failed:', err)
+    }
+
+    if (currentUser) {
+      try {
+        const projects = await listCloudProjects()
+        setCloudProjects(projects)
+      } catch (err: unknown) {
+        console.warn('Load cloud projects failed:', err)
+      }
+    } else {
+      setCloudProjects([])
+    }
+  }, [currentUser])
+
+  // Trigger refresh when user login state changes
+  useEffect(() => {
+    void refreshHistory()
+  }, [refreshHistory])
+
+  // History operations
+  const currentState = history?.present || null
+
+  // Save current project state to IndexedDB
+  const persistCurrentDraft = useCallback(
+    async (targetFile: File, state: EditorState, source: DecodedSource) => {
+      try {
+        const draftId = currentDraftIdRef.current || `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+        currentDraftIdRef.current = draftId
+
+        const thumbnail = generateThumbnailFromSource(source, 320)
+        const title = targetFile.name.replace(/\.[^/.]+$/, '')
+
+        await saveHistoryItem({
+          id: draftId,
+          title,
+          fileName: targetFile.name,
+          fileSize: targetFile.size,
+          mimeType: targetFile.type || 'image/jpeg',
+          width: source.width,
+          height: source.height,
+          thumbnail,
+          originalBlob: targetFile,
+          editorState: state,
+          updatedAt: Date.now(),
+        })
+
+        // Refresh local items
+        const locals = await listHistory()
+        setLocalHistoryItems(locals)
+      } catch (err) {
+        console.warn('Auto-save to IndexedDB skipped:', err)
+      }
+    },
+    []
+  )
+
   // Load and decode an image file
   const loadFile = useCallback(
     async (nextFile: File) => {
@@ -131,6 +257,10 @@ export function App() {
         setProvenanceResultDetail(null)
         setProvenanceError(null)
 
+        // Assign new draft ID
+        const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+        currentDraftIdRef.current = draftId
+
         // Fit image nicely into screen viewport
         const margin = 120
         const availW = window.innerWidth - margin
@@ -138,6 +268,9 @@ export function App() {
         const fitScale = Math.min(1.0, Math.min(availW / decoded.width, availH / decoded.height))
         setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
         setPanOffset({ x: 0, y: 0 })
+
+        // Auto-save initial draft into IndexedDB
+        void persistCurrentDraft(nextFile, initial, decoded)
 
         showToast(`已载入 ${nextFile.name}，完全在本地处理`, 'success')
       } catch (err) {
@@ -148,34 +281,51 @@ export function App() {
         setIsProcessing(false)
       }
     },
-    [decodedSource, showToast]
+    [decodedSource, showToast, persistCurrentDraft]
   )
 
-  // History operations
-  const currentState = history?.present || null
-
+  // History state updates
   const handleStateChange = useCallback((nextState: EditorState) => {
     setHistory((prev) => (prev ? { ...prev, present: nextState } : null))
   }, [])
 
-  const handleCommitHistory = useCallback((nextState: EditorState) => {
-    setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
-  }, [])
+  const handleCommitHistory = useCallback(
+    (nextState: EditorState) => {
+      setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
+      if (file && decodedSource) {
+        void persistCurrentDraft(file, nextState, decodedSource)
+      }
+    },
+    [file, decodedSource, persistCurrentDraft]
+  )
 
   const handleUndo = useCallback(() => {
-    setHistory((prev) => (prev ? undoHistory(prev) : null))
-  }, [])
+    setHistory((prev) => {
+      const next = prev ? undoHistory(prev) : null
+      if (next && file && decodedSource) {
+        void persistCurrentDraft(file, next.present, decodedSource)
+      }
+      return next
+    })
+  }, [file, decodedSource, persistCurrentDraft])
 
   const handleRedo = useCallback(() => {
-    setHistory((prev) => (prev ? redoHistory(prev) : null))
-  }, [])
+    setHistory((prev) => {
+      const next = prev ? redoHistory(prev) : null
+      if (next && file && decodedSource) {
+        void persistCurrentDraft(file, next.present, decodedSource)
+      }
+      return next
+    })
+  }, [file, decodedSource, persistCurrentDraft])
 
   const handleRevert = useCallback(() => {
-    if (!decodedSource) return
+    if (!decodedSource || !file) return
     const initial = createEditorState(decodedSource.width, decodedSource.height)
     setHistory((prev) => (prev ? pushHistory(prev, initial) : null))
+    void persistCurrentDraft(file, initial, decodedSource)
     showToast('已还原为原始状态', 'info')
-  }, [decodedSource, showToast])
+  }, [decodedSource, file, persistCurrentDraft, showToast])
 
   // Crop controls
   const handleRatioSelect = useCallback(
@@ -261,7 +411,7 @@ export function App() {
 
   // Download Trigger
   const handleQuickExport = useCallback(async () => {
-    if (!file) return
+    if (!file || !decodedSource || !currentState) return
     setIsProcessing(true)
     try {
       const { blob, filename } = await exportImage(outputMime, quality)
@@ -273,6 +423,9 @@ export function App() {
       a.click()
       document.body.removeChild(a)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
+
+      // Also persist to history
+      void persistCurrentDraft(file, currentState, decodedSource)
       showToast(`已导出并下载：${filename}`, 'success')
     } catch (err) {
       console.error('Export failed:', err)
@@ -280,7 +433,7 @@ export function App() {
     } finally {
       setIsProcessing(false)
     }
-  }, [file, exportImage, outputMime, quality, showToast])
+  }, [file, decodedSource, currentState, exportImage, outputMime, quality, persistCurrentDraft, showToast])
 
   const handleExportFormat = useCallback(
     async (mime: string) => {
@@ -295,8 +448,8 @@ export function App() {
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      showToast(`已保存为 ${mime.split('/')[1].toUpperCase()}：${filename}`, 'success')
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        showToast(`已保存为 ${mime.split('/')[1].toUpperCase()}：${filename}`, 'success')
       } catch (err) {
         console.error('Export failed:', err)
         showToast('保存失败', 'error')
@@ -316,9 +469,7 @@ export function App() {
     setIsProcessing(true)
     try {
       const { blob } = await exportImage('image/png', 100)
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob }),
-      ])
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
       showToast('已复制图片到系统剪贴板！可以直接在微信/QQ等按 ⌘V 粘贴', 'success')
     } catch (err) {
       console.error('Copy to clipboard failed:', err)
@@ -354,11 +505,19 @@ export function App() {
       const input = createProvenanceInput(blob, file.name)
       const result = await checkProvenance(input)
       const detected = result.evidence.some((e) => e.outcome === 'detected')
-      const note = result.evidence.length > 0
-        ? result.evidence.map((e) => `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${e.issuer ? ` (${e.issuer})` : ''}`).join(' · ')
-        : detected
-        ? '已识别到数字水印或元数据来源标记'
-        : '未检出嵌入式 AI 来源信号'
+      const note =
+        result.evidence.length > 0
+          ? result.evidence
+              .map(
+                (e) =>
+                  `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${
+                    e.issuer ? ` (${e.issuer})` : ''
+                  }`
+              )
+              .join(' · ')
+          : detected
+          ? '已识别到数字水印或元数据来源标记'
+          : '未检出嵌入式 AI 来源信号'
       setProvenanceResult({ detected, note })
       setProvenanceResultDetail(result)
       showToast(detected ? '检出 AI 来源信号' : '未检出 AI 信号', detected ? 'info' : 'success')
@@ -458,13 +617,24 @@ export function App() {
         const result = await checkProvenance(input)
         setProvenanceResultDetail(result)
         const detected = result.evidence.some((e) => e.outcome === 'detected')
-        const note = result.evidence.length > 0
-          ? result.evidence.map((e) => `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${e.issuer ? ` (${e.issuer})` : ''}`).join(' · ')
-          : detected
-          ? '已识别到数字水印或元数据来源标记'
-          : '未检出嵌入式 AI 来源信号'
+        const note =
+          result.evidence.length > 0
+            ? result.evidence
+                .map(
+                  (e) =>
+                    `${e.signal.toUpperCase()}: ${e.outcome === 'detected' ? '已检出' : '未检出'}${
+                      e.issuer ? ` (${e.issuer})` : ''
+                    }`
+                )
+                .join(' · ')
+            : detected
+            ? '已识别到数字水印或元数据来源标记'
+            : '未检出嵌入式 AI 来源信号'
         setProvenanceResult({ detected, note })
-        showToast(detected ? '检出 AI / C2PA 隐形水印信号' : '未检出嵌入式 AI / C2PA 信号', detected ? 'info' : 'success')
+        showToast(
+          detected ? '检出 AI / C2PA 隐形水印信号' : '未检出嵌入式 AI / C2PA 信号',
+          detected ? 'info' : 'success'
+        )
       } catch (err: unknown) {
         console.error('Provenance check failed:', err)
         const msg = err instanceof Error ? err.message : '来源检测服务响应异常'
@@ -476,6 +646,186 @@ export function App() {
     },
     [file, decodedSource, currentState, exportImage, showToast]
   )
+
+  // Restore project from history item
+  const handleRestoreUnifiedItem = useCallback(
+    async (item: UnifiedHistoryItem) => {
+      if (item.localItem) {
+        const local = item.localItem
+        setIsProcessing(true)
+        try {
+          const restoredFile = new File([local.originalBlob], local.fileName, { type: local.mimeType })
+          const decoded = await decodeEditorSource(restoredFile)
+          decodedSource?.close()
+          setFile(restoredFile)
+          setDecodedSource(decoded)
+          setHistory({ past: [], present: local.editorState, future: [] })
+          currentDraftIdRef.current = local.id
+          setActiveTool('none')
+
+          // Fit viewport
+          const margin = 120
+          const availW = window.innerWidth - margin
+          const availH = window.innerHeight - margin
+          const fitScale = Math.min(1.0, Math.min(availW / decoded.width, availH / decoded.height))
+          setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
+          setPanOffset({ x: 0, y: 0 })
+
+          setShowHistoryDrawer(false)
+          showToast(`已恢复草稿：${local.title}`, 'success')
+        } catch (err) {
+          console.error('Failed to restore history draft:', err)
+          showToast('恢复草稿失败，原图可能损坏', 'error')
+        } finally {
+          setIsProcessing(false)
+        }
+        return
+      }
+
+      // If cloudItem without localItem, check if any local item has same cloudId or title
+      if (item.cloudItem) {
+        const match = localHistoryItems.find(
+          (l) => l.cloudId === item.cloudItem?.id || l.fileName === item.cloudItem?.original_filename
+        )
+        if (match) {
+          await handleRestoreUnifiedItem({
+            id: match.id,
+            source: 'local',
+            title: match.title,
+            fileName: match.fileName,
+            fileSize: match.fileSize,
+            dimensions: { width: match.width, height: match.height },
+            thumbnail: match.thumbnail,
+            updatedAt: match.updatedAt,
+            originalBlob: match.originalBlob,
+            localItem: match,
+          })
+          return
+        }
+        showToast('该云端草稿的原图未缓存在当前浏览器中，请先在原设备使用或重新拖入原图', 'info')
+      }
+    },
+    [decodedSource, localHistoryItems, showToast]
+  )
+
+  // Fast direct download from history drawer
+  const handleExportUnifiedItem = useCallback(
+    async (item: UnifiedHistoryItem) => {
+      if (!item.localItem) {
+        showToast('该草稿无本地图像源，请在原设备下载', 'info')
+        return
+      }
+      setIsProcessing(true)
+      try {
+        const decoded = await decodeEditorSource(item.localItem.originalBlob)
+        const blob = await exportEditor(decoded, item.localItem.editorState, factory, 'image/webp', 0.85)
+        decoded.close()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${item.title}_exported.webp`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        showToast(`已快速导出：${item.title}`, 'success')
+      } catch (err) {
+        console.error('Fast export failed:', err)
+        showToast('快速导出失败', 'error')
+      } finally {
+        setIsProcessing(false)
+      }
+    },
+    [factory, showToast]
+  )
+
+  // Sync local item to user's cloud projects
+  const handleSyncToCloud = useCallback(
+    async (localItem: LocalHistoryItem) => {
+      if (!currentUser) {
+        setShowAuthModal(true)
+        showToast('请先登录账号以同步草稿至云端', 'info')
+        return
+      }
+
+      try {
+        const savedProject = await saveCloudProject({
+          id: localItem.cloudId || localItem.id,
+          title: localItem.title,
+          original_filename: localItem.fileName,
+          dimensions_width: localItem.width,
+          dimensions_height: localItem.height,
+          thumbnail_data: localItem.thumbnail,
+          state_json: JSON.stringify(localItem.editorState),
+        })
+
+        if (savedProject) {
+          await saveHistoryItem({
+            ...localItem,
+            isCloudSynced: true,
+            cloudId: savedProject.id,
+          })
+          await refreshHistory()
+          showToast(`已同步「${localItem.title}」至云端项目`, 'success')
+        } else {
+          showToast('同步至云端失败', 'error')
+        }
+      } catch (err) {
+        console.error('Sync to cloud failed:', err)
+        showToast('网络错误，同步失败', 'error')
+      }
+    },
+    [currentUser, refreshHistory, showToast]
+  )
+
+  // Delete item from local or cloud
+  const handleDeleteUnifiedItem = useCallback(
+    async (item: UnifiedHistoryItem) => {
+      try {
+        if (item.localItem) {
+          await deleteHistoryItem(item.localItem.id)
+        }
+        if (item.cloudItem) {
+          await deleteCloudProject(item.cloudItem.id)
+        }
+        await refreshHistory()
+        showToast(`已删除草稿「${item.title}」`, 'info')
+      } catch (err) {
+        console.error('Delete item failed:', err)
+        showToast('删除失败', 'error')
+      }
+    },
+    [refreshHistory, showToast]
+  )
+
+  // Clear all local drafts
+  const handleClearAllLocal = useCallback(async () => {
+    try {
+      await clearAllHistory()
+      await refreshHistory()
+      showToast('已清空全部本地历史草稿', 'success')
+    } catch (err) {
+      console.error('Clear history failed:', err)
+      showToast('清空失败', 'error')
+    }
+  }, [refreshHistory, showToast])
+
+  // Logout handler
+  const handleLogout = useCallback(async () => {
+    try {
+      await logoutUser()
+      setCurrentUser(null)
+      setCloudProjects([])
+      showToast('已退出登录，当前继续使用访客模式', 'info')
+    } catch (err) {
+      console.warn('Logout failed:', err)
+    }
+  }, [showToast])
+
+  // Total local cache size bytes
+  const totalStorageBytes = useMemo(() => {
+    return localHistoryItems.reduce((acc, cur) => acc + (cur.fileSize || 0) + (cur.thumbnail?.length || 0), 0)
+  }, [localHistoryItems])
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -490,7 +840,7 @@ export function App() {
         handleUndo()
         return
       }
-      if ((e.metaKey || e.ctrlKey) && (e.shiftKey && e.code === 'KeyZ' || e.code === 'KeyY')) {
+      if ((e.metaKey || e.ctrlKey) && ((e.shiftKey && e.code === 'KeyZ') || e.code === 'KeyY')) {
         e.preventDefault()
         handleRedo()
         return
@@ -521,6 +871,7 @@ export function App() {
         else if (e.code === 'KeyF') setActiveTool((prev) => (prev === 'adjust' ? 'none' : 'adjust'))
         else if (e.code === 'KeyW') setActiveTool((prev) => (prev === 'watermark' ? 'none' : 'watermark'))
         else if (e.code === 'KeyO') setActiveTool((prev) => (prev === 'compress' ? 'none' : 'compress'))
+        else if (e.code === 'KeyH') setShowHistoryDrawer((v) => !v)
         else if (e.code === 'Backslash') setIsComparingOriginal(true)
         else if (e.code === 'Escape') setActiveTool('none')
       }
@@ -547,7 +898,7 @@ export function App() {
         const pasted = e.clipboardData.files[0]
         if (pasted.type.startsWith('image/')) {
           e.preventDefault()
-          loadFile(pasted)
+          void loadFile(pasted)
         }
       }
     }
@@ -564,9 +915,19 @@ export function App() {
         className="hidden"
         onChange={(e) => {
           if (e.target.files && e.target.files[0]) {
-            loadFile(e.target.files[0])
+            void loadFile(e.target.files[0])
           }
         }}
+      />
+
+      {/* Floating Top-Right User & History Navigation Capsule */}
+      <UserNavCapsule
+        user={currentUser}
+        historyCount={localHistoryItems.length + cloudProjects.length}
+        onOpenHistory={() => setShowHistoryDrawer(true)}
+        onOpenAuth={() => setShowAuthModal(true)}
+        onOpenProfile={() => setShowProfileModal(true)}
+        onLogout={handleLogout}
       />
 
       {file && decodedSource && currentState ? (
@@ -588,9 +949,11 @@ export function App() {
             onZoomOut={() => setZoomScale((s) => Math.max(0.05, s * 0.8))}
             onZoomReset={() => {
               if (Math.abs(zoomScale - 1.0) < 0.1) {
-                // Fit
                 const margin = 120
-                const fit = Math.min(1.0, Math.min((window.innerWidth - margin) / decodedSource.width, (window.innerHeight - margin) / decodedSource.height))
+                const fit = Math.min(
+                  1.0,
+                  Math.min((window.innerWidth - margin) / decodedSource.width, (window.innerHeight - margin) / decodedSource.height)
+                )
                 setZoomScale(fit)
               } else {
                 setZoomScale(1.0)
@@ -677,9 +1040,84 @@ export function App() {
           />
         </>
       ) : (
-        /* Empty State Dropzone */
-        <EmptyDropzone onFileSelect={loadFile} error={errorMessage} />
+        /* Empty State Dropzone with Recent Items shelf */
+        <EmptyDropzone
+          onFileSelect={loadFile}
+          error={errorMessage}
+          recentItems={localHistoryItems.map((item) => ({
+            id: item.id,
+            title: item.title,
+            thumbnail: item.thumbnail,
+            dimensions: { width: item.width, height: item.height },
+            updatedAt: item.updatedAt,
+          }))}
+          onSelectRecent={(id) => {
+            const item = localHistoryItems.find((x) => x.id === id)
+            if (item) {
+              void handleRestoreUnifiedItem({
+                id: item.id,
+                source: 'local',
+                title: item.title,
+                fileName: item.fileName,
+                fileSize: item.fileSize,
+                dimensions: { width: item.width, height: item.height },
+                thumbnail: item.thumbnail,
+                updatedAt: item.updatedAt,
+                originalBlob: item.originalBlob,
+                localItem: item,
+              })
+            }
+          }}
+          onViewAllHistory={() => setShowHistoryDrawer(true)}
+        />
       )}
+
+      {/* Slide-over History Drawer */}
+      <HistoryDrawer
+        isOpen={showHistoryDrawer}
+        user={currentUser}
+        localItems={localHistoryItems}
+        cloudItems={cloudProjects}
+        storageBytes={totalStorageBytes}
+        onClose={() => setShowHistoryDrawer(false)}
+        onRestoreItem={(item) => void handleRestoreUnifiedItem(item)}
+        onExportItem={(item) => void handleExportUnifiedItem(item)}
+        onSyncToCloud={(item) => void handleSyncToCloud(item)}
+        onDeleteItem={(item) => void handleDeleteUnifiedItem(item)}
+        onClearAllLocal={() => void handleClearAllLocal()}
+        onOpenAuth={() => {
+          setShowHistoryDrawer(false)
+          setShowAuthModal(true)
+        }}
+      />
+
+      {/* Auth Modal (Login / Register) */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={(user) => {
+          setCurrentUser(user)
+          void refreshHistory()
+          showToast(`欢迎回来，${user.nickname || user.username}！`, 'success')
+        }}
+      />
+
+      {/* Profile Modal */}
+      <ProfileModal
+        isOpen={showProfileModal}
+        user={currentUser}
+        localHistoryCount={localHistoryItems.length}
+        cloudProjectsCount={cloudProjects.length}
+        onClose={() => setShowProfileModal(false)}
+        onUserUpdated={(updated) => {
+          setCurrentUser(updated)
+          showToast('个人资料已保存', 'success')
+        }}
+        onLogout={() => {
+          void handleLogout()
+          setShowProfileModal(false)
+        }}
+      />
 
       {/* Floating Toast Notification */}
       {toast && (

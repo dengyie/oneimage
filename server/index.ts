@@ -8,6 +8,9 @@ import { authorizeProvenanceRequest } from './security'
 import { registerHealthRoute } from './health-route'
 import { configureOutboundProxy } from './proxy'
 import { createRateLimiter } from './rate-limit'
+import { initDatabase } from './db'
+import { registerAuthRoutes } from './auth-routes'
+import { registerProjectRoutes } from './project-routes'
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
@@ -17,8 +20,14 @@ async function main(): Promise<void> {
   configureOutboundProxy(process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy)
   const rateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 30, maxTrackedClients: 10_000 })
   const allowDevelopmentOrigin = process.env.NODE_ENV === 'development'
+
+  // Initialize SQLite Database
+  const appDb = initDatabase()
+
   registerHealthRoute(app, { providerConfigured: Boolean(process.env.OPENAI_API_KEY) })
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
+  registerAuthRoutes(app, appDb.db)
+  registerProjectRoutes(app, appDb.db)
   registerProvenanceRoute(
     app,
     (file, filename, signal) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename, signal),
@@ -36,6 +45,7 @@ async function main(): Promise<void> {
     app.log.info({ signal }, 'shutting down OneImage server')
     try {
       await app.close()
+      appDb.close()
     } catch (error) {
       app.log.error({ err: error }, 'OneImage server shutdown failed')
       process.exitCode = 1

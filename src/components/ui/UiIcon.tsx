@@ -13,7 +13,8 @@ export type UiIconName =
   | "crop" | "brush" | "highlighter" | "arrow" | "mosaic" | "type"
   | "sliders" | "download" | "undo" | "redo" | "rotate-cw"
   | "flip-horizontal" | "flip-vertical" | "circle" | "maximize"
-  | "zoom-in" | "zoom-out" | "trash" | "shield-check" | "clipboard";
+  | "zoom-in" | "zoom-out" | "trash" | "shield-check" | "clipboard"
+  | "user" | "clock" | "cloud" | "logout";
 
 const paths: Record<UiIconName, React.ReactNode> = {
   "arrow-down": <path d="m6 9 6 6 6-6" />,
@@ -69,6 +70,10 @@ const paths: Record<UiIconName, React.ReactNode> = {
   "zoom-out": <><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></>,
   trash: <><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></>,
   "shield-check": <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><polyline points="12 6 12 12 16 14" /></>,
+  cloud: <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />,
+  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>,
 };
 
 export interface UiIconProps extends React.SVGProps<SVGSVGElement> {

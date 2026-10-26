@@ -1,13 +1,38 @@
 import React, { useRef, useState } from 'react'
 import { UiIcon } from '../ui/UiIcon'
 
+export interface RecentItemPreview {
+  id: string
+  title: string
+  thumbnail: string
+  dimensions?: { width: number; height: number }
+  updatedAt: number
+}
+
 interface EmptyDropzoneProps {
   onFileSelect: (file: File) => void
   onPasteText?: () => void
   error?: string | null
+  recentItems?: RecentItemPreview[]
+  onSelectRecent?: (id: string) => void
+  onViewAllHistory?: () => void
 }
 
-export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({ onFileSelect, error }) => {
+function formatRelativeTime(timestamp: number): string {
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000)
+  if (diffSec < 60) return '刚刚'
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`
+  return new Date(timestamp).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+}
+
+export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({
+  onFileSelect,
+  error,
+  recentItems = [],
+  onSelectRecent,
+  onViewAllHistory,
+}) => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
 
@@ -34,7 +59,7 @@ export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({ onFileSelect, erro
 
   return (
     <div
-      className={`relative w-full h-full flex flex-col items-center justify-center p-6 transition-all duration-300 ${
+      className={`relative w-full h-full flex flex-col items-center justify-center p-6 transition-all duration-300 overflow-y-auto ${
         isDragOver ? 'bg-zinc-900/60' : 'bg-transparent'
       }`}
       onDragOver={handleDragOver}
@@ -94,6 +119,65 @@ export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({ onFileSelect, erro
           </div>
         )}
       </div>
+
+      {/* Recent Projects Shelf */}
+      {recentItems.length > 0 && (
+        <div className="max-w-xl w-full mt-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-center justify-between mb-3 px-1">
+            <span className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
+              <UiIcon name="clock" size={14} className="text-emerald-400" />
+              <span>最近编辑草稿</span>
+            </span>
+            {onViewAllHistory && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onViewAllHistory()
+                }}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                查看全部 ({recentItems.length}) →
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {recentItems.slice(0, 4).map((item) => (
+              <div
+                key={item.id}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSelectRecent?.(item.id)
+                }}
+                className="group relative flex flex-col p-2 rounded-2xl bg-zinc-900/40 hover:bg-zinc-900/80 border border-white/5 hover:border-white/15 cursor-pointer transition-all shadow-sm hover:scale-[1.03]"
+              >
+                <div className="w-full aspect-[4/3] rounded-xl overflow-hidden bg-zinc-950 mb-2 relative">
+                  {item.thumbnail ? (
+                    <img
+                      src={item.thumbnail}
+                      alt={item.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-zinc-700">
+                      <UiIcon name="image" size={20} />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[11px] font-medium">
+                    继续编辑
+                  </div>
+                </div>
+                <div className="text-[11px] font-medium text-zinc-200 truncate px-1">
+                  {item.title}
+                </div>
+                <div className="text-[10px] text-zinc-500 truncate px-1 mt-0.5">
+                  {formatRelativeTime(item.updatedAt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
