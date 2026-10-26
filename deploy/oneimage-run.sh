@@ -21,4 +21,17 @@ cd "$release"
 set -a
 . "$root/.env"
 set +a
-exec /usr/local/bin/node "$release/index.cjs"
+
+mkdir -p "$root/data"
+export ONEIMAGE_DB_PATH="${ONEIMAGE_DB_PATH:-$root/data/oneimage.db}"
+
+node_bin="/usr/local/bin/node"
+if [ -x "/opt/node24/bin/node" ]; then
+  node_bin="/opt/node24/bin/node"
+elif [ -x "/opt/node-v24.22.1-linux-x64/bin/node" ]; then
+  node_bin="/opt/node-v24.22.1-linux-x64/bin/node"
+elif [ -x "/opt/node-v22.21.1-linux-x64/bin/node" ]; then
+  node_bin="/opt/node-v22.21.1-linux-x64/bin/node"
+fi
+
+exec "$node_bin" "$release/index.cjs"
