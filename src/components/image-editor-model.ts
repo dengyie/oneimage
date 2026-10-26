@@ -70,3 +70,38 @@ export function updateCropGesture(gesture: CropGesture, pointer: { x: number; y:
   }
   return clampCrop(crop, gesture.bounds, gesture.aspectRatio)
 }
+
+export interface PanOffset {
+  x: number
+  y: number
+}
+
+// Cursor-anchored wheel zoom for the spatial viewport transform
+// `translate(pan) scale(s)` with transform-origin at the element center (the
+// element is flex-centered in the container). The element point under the
+// cursor q = (mouse - center - pan) / s must stay under the cursor after the
+// zoom: center + pan' + q * s' = mouse, hence the pan update below. Solving
+// around the container's top-left corner instead — the model that matches a
+// `transform-origin: 0 0` layout — made the image drift by roughly
+// center * (ratio - 1) on every wheel tick, compounding into the reported
+// "image flies away" behavior.
+export function computeCursorAnchoredPan(
+  mouseX: number,
+  mouseY: number,
+  centerX: number,
+  centerY: number,
+  pan: PanOffset,
+  prevScale: number,
+  nextScale: number
+): PanOffset {
+  if (!Number.isFinite(prevScale) || prevScale <= 0 || !Number.isFinite(nextScale) || nextScale <= 0) {
+    return { ...pan }
+  }
+  const ratio = nextScale / prevScale
+  const offsetX = mouseX - centerX
+  const offsetY = mouseY - centerY
+  return {
+    x: offsetX - (offsetX - pan.x) * ratio,
+    y: offsetY - (offsetY - pan.y) * ratio,
+  }
+}

@@ -3,7 +3,7 @@ import type { EditorState, Rect, AnnotationLayer } from '../../domain/editor-sta
 import { createEditorState, clampCrop, rotatedDimensions, isStrokePointRedundant } from '../../domain/editor-state'
 import { renderEditor, schedulePreview, type DecodedSource } from '../../application/editor-renderer'
 import { createBrowserCanvasFactory } from '../../infrastructure/editor-canvas'
-import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, type CropHandle, type CropGesture } from '../image-editor-model'
+import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, computeCursorAnchoredPan, type CropHandle, type CropGesture } from '../image-editor-model'
 import type { ActiveTool } from './BottomDock'
 import type { MarkupMode } from './SubToolbars/MarkupSubToolbar'
 import type { MosaicType } from './SubToolbars/MosaicSubToolbar'
@@ -155,9 +155,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       const factor = e.deltaY < 0 ? 1.15 : 0.87
       const newScale = Math.min(32, Math.max(0.05, zoomScale * factor))
 
-      // Keep mouse pointer centered
-      const newPanX = mouseX - (mouseX - panOffset.x) * (newScale / zoomScale)
-      const newPanY = mouseY - (mouseY - panOffset.y) * (newScale / zoomScale)
+      const { x: newPanX, y: newPanY } = computeCursorAnchoredPan(
+        mouseX,
+        mouseY,
+        rect.width / 2,
+        rect.height / 2,
+        panOffset,
+        zoomScale,
+        newScale
+      )
 
       onZoomChange(newScale)
       onPanChange({ x: newPanX, y: newPanY })
