@@ -101,4 +101,58 @@ describe('history-storage', () => {
 
     await clearAllLocalHistory()
   })
+
+  it('writes the original blob exactly once per draft and keeps metadata-only rewrites small', async () => {
+    await clearAllLocalHistory()
+
+    for (let i = 0; i < 3; i++) {
+      const saved = await saveLocalHistory(makeItem('stable', 1000 + i))
+      expect(saved).not.toBeNull()
+    }
+
+    // Raw-store inspection: the blob lives once in `blobs`; `projects` no
+    // longer carries an inline originalBlob.
+    const raw = await new Promise<{ blobCount: number; inlineBlob: boolean }>((resolve, reject) => {
+      const request = indexedDB.open('oneimage_history_v1', 2)
+      request.onsuccess = () => {
+        const db = request.result
+        const tx = db.transaction(['blobs', 'projects'], 'readonly')
+        const blobCountReq = tx.objectStore('blobs').count()
+        const recordReq = tx.objectStore('projects').get('stable')
+        tx.oncomplete = () => {
+          const record = recordReq.result as Record<string, unknown> | undefined
+          resolve({
+            blobCount: blobCountReq.result,
+            inlineBlob: Boolean(record && 'originalBlob' in record),
+          })
+        }
+        tx.onerror = () => reject(tx.error)
+      }
+      request.onerror = () => reject(request.error)
+    })
+    expect(raw.blobCount).toBe(1)
+    expect(raw.inlineBlob).toBe(false)
+
+    // Metadata rewrite picked up the latest updatedAt while the blob stayed.
+    const fetched = await getLocalHistory('stable')
+    expect(fetched?.updatedAt).toBe(1002)
+    await expect(fetched?.originalBlob.text()).resolves.toBe('blob-stable')
+
+    await clearAllLocalHistory()
+  })
+
+  it('reuses the stored thumbnail after the first save of a draft', async () => {
+    await clearAllLocalHistory()
+
+    await saveLocalHistory(makeItem('thumb', 1000))
+    const withCustomThumb = await saveLocalHistory({ ...makeItem('thumb', 2000), thumbnail: 'data:image/webp;base64,NEW' })
+
+    // The storage layer keeps the first thumbnail: it renders the unchanging
+    // original image, so later saves cannot improve on it.
+    const fetched = await getLocalHistory('thumb')
+    expect(fetched?.thumbnail).toBe('data:stub')
+    expect(withCustomThumb?.updatedAt).toBe(2000)
+
+    await clearAllLocalHistory()
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampCrop, createEditorState, redoHistory, rotatedDimensions, rotateEditorState, undoHistory, type EditorHistory } from '../src/domain/editor-state'
+import { clampCrop, createEditorState, isStrokePointRedundant, redoHistory, rotatedDimensions, rotateEditorState, undoHistory, type EditorHistory } from '../src/domain/editor-state'
 
 describe('editor state', () => {
   it('creates a full-image crop with neutral adjustments', () => {
@@ -31,5 +31,20 @@ describe('editor state', () => {
 
   it('uses a bounding box for arbitrary rotation angles', () => {
     expect(rotatedDimensions(100, 50, 45)).toEqual({ width: 107, height: 107 })
+  })
+
+  it('decimates sub-pixel stroke samples but keeps visually distinct points', () => {
+    // First point of a stroke is always significant.
+    expect(isStrokePointRedundant(undefined, { x: 10, y: 10 })).toBe(false)
+    // Identical and sub-pixel source moves are redundant.
+    expect(isStrokePointRedundant({ x: 10, y: 10 }, { x: 10, y: 10 })).toBe(true)
+    expect(isStrokePointRedundant({ x: 10, y: 10 }, { x: 10.5, y: 10.4 })).toBe(true)
+    // A full source pixel of travel is kept, including on the diagonal.
+    expect(isStrokePointRedundant({ x: 10, y: 10 }, { x: 11, y: 10 })).toBe(false)
+    expect(isStrokePointRedundant({ x: 10, y: 10 }, { x: 10.8, y: 10.8 })).toBe(false)
+    // Explicit threshold honoured: (4,3) is exactly 5px away, so only a
+    // strictly larger threshold drops it.
+    expect(isStrokePointRedundant({ x: 0, y: 0 }, { x: 4, y: 3 }, 5)).toBe(false)
+    expect(isStrokePointRedundant({ x: 0, y: 0 }, { x: 4, y: 3 }, 5.0001)).toBe(true)
   })
 })

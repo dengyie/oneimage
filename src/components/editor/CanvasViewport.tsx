@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import type { EditorState, Rect, AnnotationLayer } from '../../domain/editor-state'
-import { createEditorState, clampCrop, rotatedDimensions } from '../../domain/editor-state'
+import { createEditorState, clampCrop, rotatedDimensions, isStrokePointRedundant } from '../../domain/editor-state'
 import { renderEditor, schedulePreview, type DecodedSource } from '../../application/editor-renderer'
 import { createBrowserCanvasFactory } from '../../infrastructure/editor-canvas'
 import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, type CropHandle, type CropGesture } from '../image-editor-model'
@@ -291,6 +291,10 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       const localPt = getCanvasLocalCoord(e.clientX, e.clientY)
 
       if (currentStrokeRef.current.mode === 'brush' || currentStrokeRef.current.mode === 'highlighter') {
+        const lastPoint = currentStrokeRef.current.points[currentStrokeRef.current.points.length - 1]
+        // Sub-pixel source moves cannot alter the rendered stroke; skipping
+        // them avoids both state bloat and a re-render per pointer event.
+        if (isStrokePointRedundant(lastPoint, sourcePt)) return
         const nextPoints = [...currentStrokeRef.current.points, sourcePt]
         const nextCanvasPoints = [...currentStrokeRef.current.canvasPoints, localPt]
         const updated: DrawingStroke = {

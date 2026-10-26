@@ -39,7 +39,6 @@ import {
 import {
   listLocalHistory,
   saveLocalHistory,
-  getLocalHistory,
   deleteLocalHistory,
   clearAllLocalHistory,
   type LocalHistoryItem,
@@ -197,11 +196,10 @@ export function App() {
       const draftId = currentDraftIdRef.current
       if (!draftId) return
       try {
-        // IndexedDB put replaces the whole record, so a fresh object would
-        // silently detach the draft from its cloud project and duplicate the
-        // cloud entry on the next sync. Carry the linkage over.
-        const existing = await getLocalHistory(draftId)
-        const thumbnail = generateThumbnailFromSource(source, 320)
+        // The storage layer owns the per-draft invariants: it preserves cloud
+        // linkage across upserts, reuses the stored thumbnail (the original
+        // image never changes for a draft id) and writes the original blob
+        // exactly once. This call only supplies fresh editor state.
         const saved = await saveLocalHistory({
           id: draftId,
           title: targetFile.name.replace(/\.[^/.]+$/, ''),
@@ -210,12 +208,10 @@ export function App() {
           mimeType: targetFile.type || 'image/jpeg',
           width: source.width,
           height: source.height,
-          thumbnail,
+          thumbnail: generateThumbnailFromSource(source, 320),
           originalBlob: targetFile,
           editorState: state,
           updatedAt: Date.now(),
-          isCloudSynced: existing?.isCloudSynced,
-          cloudId: existing?.cloudId,
         })
 
         if (saved === null) {

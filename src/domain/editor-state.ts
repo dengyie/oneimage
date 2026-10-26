@@ -154,6 +154,16 @@ export function redoHistory(history: EditorHistory): EditorHistory {
   return { past: [...history.past, history.present], present: next, future: history.future.slice(1) }
 }
 
+// Pointer events fire far faster than a stroke's rendered width can express;
+// points closer than minDistancePx (in source image space) are visually
+// redundant and would only bloat persisted editor state and cloud payloads.
+export function isStrokePointRedundant(last: Point | undefined, next: Point, minDistancePx = 1): boolean {
+  if (!last) return false
+  const dx = next.x - last.x
+  const dy = next.y - last.y
+  return dx * dx + dy * dy < minDistancePx * minDistancePx
+}
+
 function assertDimension(value: number, label: string): void {
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} must be positive`)
 }

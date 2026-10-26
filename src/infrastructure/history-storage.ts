@@ -16,9 +16,18 @@ export interface LocalHistoryItem {
   cloudId?: string
 }
 
-const DB_NAME = 'oneimage_history_v1'
+// Stored layout: project metadata lives in `projects`; the raw original image
+// lives in `blobs`, written exactly once per draft id. For a given draft id
+// the original image never changes (loading or replacing a file always
+// allocates a new draft id, and restoring keeps the stored blob), so rewriting
+// up to 25MB of pixels on every debounced autosave was pure write
+// amplification — subsequent saves only touch the small metadata record.
+interface StoredProject extends Omit<LocalHistoryItem, 'originalBlob'> {}
+
+const DB_NAME = 'oneimage_history_v1' // name unchanged: preserves existing user data
 const STORE_NAME = 'projects'
-const DB_VERSION = 1
+const BLOB_STORE_NAME = 'blobs'
+const DB_VERSION = 2
 const MAX_LOCAL_ITEMS = 30
 
 function isIndexedDBSupported(): boolean {
@@ -39,10 +48,36 @@ export function openHistoryDB(): Promise<IDBDatabase> {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
 
       request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result
+        const req = event.target as IDBOpenDBRequest
+        const db = req.result
+        const tx = req.transaction
+        if (!tx) throw new Error('upgrade transaction unavailable')
+
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' })
           store.createIndex('by_updatedAt', 'updatedAt', { unique: false })
+        }
+        if (!db.objectStoreNames.contains(BLOB_STORE_NAME)) {
+          db.createObjectStore(BLOB_STORE_NAME)
+        }
+
+        // v1 -> v2: inline blobs move to the blob store so autosaves stop
+        // rewriting megabytes of pixels for unchanged images.
+        if (event.oldVersion > 0 && event.oldVersion < 2) {
+          const projects = tx.objectStore(STORE_NAME)
+          const blobs = tx.objectStore(BLOB_STORE_NAME)
+          const cursorReq = projects.openCursor()
+          cursorReq.onsuccess = () => {
+            const cursor = cursorReq.result
+            if (!cursor) return
+            const item = cursor.value as StoredProject & { originalBlob?: Blob }
+            if (item.originalBlob instanceof Blob) {
+              blobs.put(item.originalBlob, item.id)
+              const { originalBlob: _dropped, ...rest } = item
+              cursor.update(rest)
+            }
+            cursor.continue()
+          }
         }
       }
 
@@ -56,29 +91,43 @@ export function openHistoryDB(): Promise<IDBDatabase> {
   return connectionPromise
 }
 
+function dropOriginalBlob(item: LocalHistoryItem): StoredProject {
+  const { originalBlob: _dropped, ...rest } = item
+  return rest
+}
+
 export async function listLocalHistory(): Promise<LocalHistoryItem[]> {
   if (!isIndexedDBSupported()) return []
 
   try {
     const db = await openHistoryDB()
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly')
-      const store = tx.objectStore(STORE_NAME)
-      const index = store.index('by_updatedAt')
+      const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readonly')
+      const index = tx.objectStore(STORE_NAME).index('by_updatedAt')
+      const blobs = tx.objectStore(BLOB_STORE_NAME)
       const request = index.openCursor(null, 'prev') // newest first
-      const results: LocalHistoryItem[] = []
+      const records: StoredProject[] = []
+      const blobRequests: IDBRequest<Blob | undefined>[] = []
 
-      request.onsuccess = (event) => {
-        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+      request.onsuccess = () => {
+        const cursor = request.result
         if (cursor) {
-          results.push(cursor.value)
+          records.push(cursor.value as StoredProject)
+          blobRequests.push(blobs.get(cursor.value.id))
           cursor.continue()
-        } else {
-          resolve(results)
         }
       }
-
       request.onerror = () => reject(request.error)
+      tx.oncomplete = () => {
+        const results: LocalHistoryItem[] = []
+        for (let i = 0; i < records.length; i++) {
+          const blob = blobRequests[i].result
+          // A record without its blob is unrestorable leftover; drop it
+          // instead of surfacing a draft that would fail on restore.
+          if (blob instanceof Blob) results.push({ ...records[i], originalBlob: blob })
+        }
+        resolve(results)
+      }
     })
   } catch (err) {
     console.error('Failed to list local history:', err)
@@ -89,57 +138,93 @@ export async function listLocalHistory(): Promise<LocalHistoryItem[]> {
 // Resolves to the persisted item, or null when the write failed (quota
 // exceeded, private mode, corrupted database). Callers must surface null:
 // silently pretending the draft was saved breaks the history guarantee.
+//
+// The storage layer owns the per-draft invariants: the original blob is
+// written only when absent for this id, the thumbnail is reused after the
+// first save (it renders the unchanging original image), and cloud linkage
+// survives upserts unless the caller passes an explicit value.
 export async function saveLocalHistory(
-  item: Omit<LocalHistoryItem, 'updatedAt'> & { updatedAt?: number }
-): Promise<LocalHistoryItem | null> {
-  const fullItem: LocalHistoryItem = {
-    ...item,
-    updatedAt: item.updatedAt || Date.now(),
+  item: Omit<LocalHistoryItem, 'updatedAt' | 'isCloudSynced' | 'cloudId'> & {
+    updatedAt?: number
+    isCloudSynced?: boolean
+    cloudId?: string
   }
+): Promise<LocalHistoryItem | null> {
+  const updatedAt = item.updatedAt || Date.now()
 
-  if (!isIndexedDBSupported()) return fullItem
+  if (!isIndexedDBSupported()) {
+    return { ...item, updatedAt }
+  }
 
   try {
     const db = await openHistoryDB()
+    const existing = await new Promise<StoredProject | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const request = tx.objectStore(STORE_NAME).get(item.id)
+      request.onsuccess = () => resolve((request.result as StoredProject) || null)
+      request.onerror = () => reject(request.error)
+    })
+
+    const merged: StoredProject = {
+      ...dropOriginalBlob(item as LocalHistoryItem),
+      thumbnail: existing?.thumbnail ?? item.thumbnail,
+      updatedAt,
+    }
+    if (item.isCloudSynced !== undefined) merged.isCloudSynced = item.isCloudSynced
+    else if (existing?.isCloudSynced !== undefined) merged.isCloudSynced = existing.isCloudSynced
+    if (item.cloudId !== undefined) merged.cloudId = item.cloudId
+    else if (existing?.cloudId !== undefined) merged.cloudId = existing.cloudId
 
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite')
-      const store = tx.objectStore(STORE_NAME)
-      const request = store.put(fullItem)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
+      const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readwrite')
+      const blobs = tx.objectStore(BLOB_STORE_NAME)
+      const hasBlobRequest = blobs.getKey(item.id)
+      hasBlobRequest.onsuccess = () => {
+        // Blob-once: the original image for a draft id never changes, so only
+        // the first save pays the bytes; later saves reuse the stored handle.
+        if (hasBlobRequest.result === undefined && item.originalBlob instanceof Blob) {
+          blobs.put(item.originalBlob, item.id)
+        }
+        tx.objectStore(STORE_NAME).put(merged)
+      }
+      hasBlobRequest.onerror = () => reject(hasBlobRequest.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
     })
 
     // Prune oldest items if count exceeds limit
     await pruneOldestItems(db, MAX_LOCAL_ITEMS)
+
+    return { ...merged, originalBlob: item.originalBlob }
   } catch (err) {
     console.error('Failed to save to local history:', err)
     return null
   }
-
-  return fullItem
 }
 
 async function pruneOldestItems(db: IDBDatabase, maxItems: number): Promise<void> {
   // Resolves on transaction completion (not cursor exhaustion) so a caller
   // refreshing its list right after saving never observes pruned items.
   await new Promise<void>((resolve) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const countReq = store.count()
+    const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readwrite')
+    const projects = tx.objectStore(STORE_NAME)
+    const blobs = tx.objectStore(BLOB_STORE_NAME)
+    const countReq = projects.count()
 
     countReq.onsuccess = () => {
       const count = countReq.result
       if (count <= maxItems) return
 
       const excess = count - maxItems
-      const index = store.index('by_updatedAt')
+      const index = projects.index('by_updatedAt')
       const cursorReq = index.openCursor(null, 'next') // oldest first
       let deleted = 0
 
-      cursorReq.onsuccess = (e) => {
-        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result
         if (cursor && deleted < excess) {
+          blobs.delete(cursor.value.id)
           cursor.delete()
           deleted++
           cursor.continue()
@@ -159,11 +244,16 @@ export async function getLocalHistory(id: string): Promise<LocalHistoryItem | nu
   try {
     const db = await openHistoryDB()
     return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly')
-      const store = tx.objectStore(STORE_NAME)
-      const request = store.get(id)
-      request.onsuccess = () => resolve(request.result || null)
-      request.onerror = () => reject(request.error)
+      const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readonly')
+      const recordRequest = tx.objectStore(STORE_NAME).get(id)
+      const blobRequest = tx.objectStore(BLOB_STORE_NAME).get(id)
+      tx.oncomplete = () => {
+        const record = recordRequest.result as StoredProject | undefined
+        const blob = blobRequest.result
+        resolve(record && blob instanceof Blob ? { ...record, originalBlob: blob } : null)
+      }
+      recordRequest.onerror = () => reject(recordRequest.error)
+      blobRequest.onerror = () => reject(blobRequest.error)
     })
   } catch {
     return null
@@ -176,11 +266,12 @@ export async function deleteLocalHistory(id: string): Promise<void> {
   try {
     const db = await openHistoryDB()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite')
-      const store = tx.objectStore(STORE_NAME)
-      const request = store.delete(id)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
+      const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readwrite')
+      tx.objectStore(STORE_NAME).delete(id)
+      tx.objectStore(BLOB_STORE_NAME).delete(id)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
     })
   } catch (err) {
     console.error('Failed to delete local history:', err)
@@ -193,11 +284,12 @@ export async function clearAllLocalHistory(): Promise<void> {
   try {
     const db = await openHistoryDB()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite')
-      const store = tx.objectStore(STORE_NAME)
-      const request = store.clear()
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
+      const tx = db.transaction([STORE_NAME, BLOB_STORE_NAME], 'readwrite')
+      tx.objectStore(STORE_NAME).clear()
+      tx.objectStore(BLOB_STORE_NAME).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
     })
   } catch (err) {
     console.error('Failed to clear local history:', err)
