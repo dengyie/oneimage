@@ -29,12 +29,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   // The modal stays mounted across open/close, so the form must re-sync with
   // the current profile every time it is opened — a useState initializer runs
-  // only once and would silently reset the saved avatar color on save.
+  // only once and would silently reset the saved avatar color on save. The
+  // save message is owned by handleSave and its timeout, not this effect:
+  // resetting it here would wipe the success note in the same commit that
+  // onUserUpdated updates the user prop.
   useEffect(() => {
     if (isOpen && user) {
       setNickname(user.nickname || '')
       setAvatarColor(user.avatar_color || DEFAULT_AVATAR_COLOR)
-      setMessage(null)
     }
   }, [isOpen, user])
 
