@@ -393,7 +393,7 @@ describe('Auth routes', () => {
       payload: { username: 'locker', email: 'locker@example.com', password: 'password123', email_code: realCode },
     })
     expect(evenCorrect.statusCode).toBe(400)
-    expect(JSON.parse(evenCorrect.body).error).toBe('email_code_required')
+    expect(JSON.parse(evenCorrect.body).error).toBe('email_code_locked')
 
     // Expired code path.
     await app.inject({ method: 'POST', url: '/api/v1/auth/email-code', payload: { email: 'stale@example.com' } })
@@ -462,6 +462,12 @@ describe('Auth routes', () => {
     })
     expect(replay.statusCode).toBe(400)
     expect(JSON.parse(replay.body).error).toBe('email_code_required')
+
+    // The anti-bomb gate survives consumption: an immediate re-request for
+    // the same address is still inside the resend cooldown.
+    const throttleAfterUse = await app.inject({ method: 'POST', url: '/api/v1/auth/email-code', payload: { email: 'final@example.com' } })
+    expect(throttleAfterUse.statusCode).toBe(429)
+    expect(JSON.parse(throttleAfterUse.body).reason).toBe('cooldown')
 
     appDb.close()
   })

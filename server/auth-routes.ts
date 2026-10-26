@@ -14,6 +14,7 @@ import type { RateLimiter } from './rate-limit'
 import {
   checkEmailCodeSendGate,
   generateEmailCode,
+  purgeStaleEmailCodes,
   storeEmailCode,
   verifyEmailCode,
 } from './email-code'
@@ -192,6 +193,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
         nickname,
       })
       purgeExpiredSessions(db)
+      purgeStaleEmailCodes(db)
       const session = createSession(db, user.id)
 
       setSessionCookie(reply, session.token)
@@ -235,6 +237,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
     }
 
     purgeExpiredSessions(db)
+    purgeStaleEmailCodes(db)
     const session = createSession(db, user.id)
     setSessionCookie(reply, session.token)
     return reply.status(200).send({

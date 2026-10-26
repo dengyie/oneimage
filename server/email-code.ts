@@ -81,15 +81,23 @@ export function storeEmailCode(db: DatabaseSync, email: string, code: string, no
 
 export type EmailCodeVerifyResult = 'ok' | 'missing' | 'expired' | 'locked' | 'mismatch'
 
+// Invalidate the consumable code but keep the row: last_sent_at, sent_count
+// and window_start are the durable anti-mail-bomb gate and must survive
+// verification, expiry, replay and lockout, or every consumed code would
+// reset the per-email throttle.
+function invalidateCode(db: DatabaseSync, email: string): void {
+  db.prepare("UPDATE email_verifications SET code_hash = '', attempts = 0 WHERE email = ?").run(email)
+}
+
 export function verifyEmailCode(db: DatabaseSync, email: string, code: string, now = Date.now()): EmailCodeVerifyResult {
   const row = getCodeRow(db, email)
-  if (!row) return 'missing'
+  if (!row || !row.code_hash) return 'missing'
   if (row.expires_at <= now) {
-    db.prepare('DELETE FROM email_verifications WHERE email = ?').run(email)
+    invalidateCode(db, email)
     return 'expired'
   }
   if (row.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
-    db.prepare('DELETE FROM email_verifications WHERE email = ?').run(email)
+    invalidateCode(db, email)
     return 'locked'
   }
 
@@ -97,18 +105,24 @@ export function verifyEmailCode(db: DatabaseSync, email: string, code: string, n
   const expected = Buffer.from(row.code_hash, 'hex')
   const matched = provided.length === expected.length && timingSafeEqual(provided, expected)
   if (matched) {
-    db.prepare('DELETE FROM email_verifications WHERE email = ?').run(email)
+    invalidateCode(db, email)
     return 'ok'
   }
 
   const nextAttempts = row.attempts + 1
   if (nextAttempts >= EMAIL_CODE_MAX_ATTEMPTS) {
-    // The code is spent: delete it and tell the caller the address is locked
-    // out, so the next attempt reads as "request a new code" rather than
-    // silently continuing a doomed guess loop.
-    db.prepare('DELETE FROM email_verifications WHERE email = ?').run(email)
+    // The code is spent by wrong guesses; persist the spent counter so the
+    // next probe (even with the correct code) reads as locked out.
+    db.prepare('UPDATE email_verifications SET attempts = ? WHERE email = ?').run(nextAttempts, email)
     return 'locked'
   }
   db.prepare('UPDATE email_verifications SET attempts = ? WHERE email = ?').run(nextAttempts, email)
   return 'mismatch'
+}
+
+// Housekeeping for consumed/expired rows: the anti-bomb window matters for an
+// hour, so rows older than a day are safe to drop. Runs alongside the session
+// purge on login/register.
+export function purgeStaleEmailCodes(db: DatabaseSync, now = Date.now()): void {
+  db.prepare('DELETE FROM email_verifications WHERE window_start < ?').run(now - 24 * 60 * 60 * 1000)
 }
