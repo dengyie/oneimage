@@ -364,6 +364,11 @@ interface PointerInput {
   radius?: number;
 }
 
+/** Idle fade-out window: dye keeps decaying for this long before the loop stops. */
+const FADE_OUT_MS = 800;
+/** Extra dye dissipation while fading out, so the trail melts instead of snapping off. */
+const FADE_OUT_DISSIPATION = 8;
+
 class FluidSimulationEngine {
   canvas: HTMLCanvasElement;
   cfg: Required<Omit<PointerRipplesProps, "className" | "style" | "opacity">>;
@@ -395,6 +400,11 @@ class FluidSimulationEngine {
   visible = true;
   active = false;
   dead = false;
+  contextLost = false;
+  fading = false;
+  fadeStart = 0;
+  cssWidth = 0;
+  cssHeight = 0;
 
   constructor(canvas: HTMLCanvasElement, options: PointerRipplesProps) {
     this.canvas = canvas;
@@ -451,12 +461,20 @@ class FluidSimulationEngine {
 
   update = (now: number) => {
     this.frame = 0;
-    if (this.dead || !this.visible) return;
+    if (this.dead || this.contextLost || !this.visible) return;
 
-    if (now - this.lastInput >= this.cfg.idleMs && this.inputs.length === 0) {
-      this.active = false;
-      this.clearAll();
-      return;
+    if (this.inputs.length === 0 && now - this.lastInput >= this.cfg.idleMs) {
+      if (!this.fading) {
+        this.fading = true;
+        this.fadeStart = now;
+      } else if (now - this.fadeStart >= FADE_OUT_MS) {
+        this.fading = false;
+        this.active = false;
+        this.clearAll();
+        return;
+      }
+    } else if (this.fading) {
+      this.fading = false;
     }
 
     const dt = Math.min(Math.max((now - this.lastTime) / 1000, 0.001), 1 / 60);
@@ -474,7 +492,7 @@ class FluidSimulationEngine {
   };
 
   move(clientX: number, clientY: number) {
-    if (this.dead || !this.visible) return;
+    if (this.dead || this.contextLost || !this.visible) return;
     const pt = this.toPoint(clientX, clientY);
     const prev = this.pointer;
     this.pointer = pt;
@@ -485,8 +503,8 @@ class FluidSimulationEngine {
       return;
     }
 
-    const w = Math.max(this.canvas.clientWidth, 1);
-    const h = Math.max(this.canvas.clientHeight, 1);
+    const w = Math.max(this.cssWidth || this.canvas.clientWidth, 1);
+    const h = Math.max(this.cssHeight || this.canvas.clientHeight, 1);
     const dx = (pt.x - prev.x) * w;
     const dy = (pt.y - prev.y) * h;
     const dist = Math.hypot(dx, dy);
@@ -509,10 +527,11 @@ class FluidSimulationEngine {
   }
 
   splat(clientX: number, clientY: number) {
-    if (this.dead || !this.visible) return;
+    if (this.dead || this.contextLost || !this.visible) return;
     const pt = this.toPoint(clientX, clientY);
     const hue = this.hue;
-    const spread = Math.min(this.canvas.clientWidth, this.canvas.clientHeight) * 0.1;
+    const spread =
+      Math.min(this.cssWidth || this.canvas.clientWidth, this.cssHeight || this.canvas.clientHeight) * 0.1;
 
     this.pointer = pt;
     this.queue({
@@ -543,7 +562,7 @@ class FluidSimulationEngine {
   }
 
   resize() {
-    if (this.dead) return;
+    if (this.dead || this.contextLost) return;
     if (this.resizeCanvas()) {
       this.initFramebuffers();
       if (!this.active) this.clearScreen();
@@ -561,7 +580,46 @@ class FluidSimulationEngine {
       return;
     }
     this.active = false;
-    this.clearScreen();
+    if (!this.contextLost) this.clearScreen();
+  }
+
+  /** Canvas CSS box updated by a ResizeObserver, so the frame loop never reads layout. */
+  setViewportSize(width: number, height: number) {
+    this.cssWidth = Math.max(1, Math.round(width));
+    this.cssHeight = Math.max(1, Math.round(height));
+  }
+
+  /** Drop the cached pointer so the first move after leaving the window starts a fresh trail. */
+  releasePointer() {
+    this.pointer = null;
+  }
+
+  handleContextLost() {
+    if (this.dead) return;
+    this.contextLost = true;
+    this.fading = false;
+    this.inputs.length = 0;
+    this.stop();
+    this.releaseGl();
+  }
+
+  handleContextRestored() {
+    if (this.dead) return;
+    this.contextLost = false;
+    try {
+      this.initFormats();
+      this.initPrograms();
+      this.initQuad();
+      this.resizeCanvas();
+      this.initFramebuffers();
+      this.clearScreen();
+    } catch {
+      this.dead = true;
+      this.releaseGl();
+      return;
+    }
+    this.lastTime = this.view.performance.now();
+    if (this.active && this.visible) this.wake();
   }
 
   destroy() {
@@ -863,8 +921,8 @@ class FluidSimulationEngine {
 
   private resizeCanvas(): boolean {
     const dpr = Math.min(this.view.devicePixelRatio || 1, this.cfg.maxPixelRatio);
-    const w = this.canvas.clientWidth || this.canvas.width || 1;
-    const h = this.canvas.clientHeight || this.canvas.height || 1;
+    const w = this.cssWidth || this.canvas.clientWidth || this.canvas.width || 1;
+    const h = this.cssHeight || this.canvas.clientHeight || this.canvas.height || 1;
     const targetW = Math.max(1, Math.floor(w * dpr));
     const targetH = Math.max(1, Math.floor(h * dpr));
 
@@ -920,7 +978,8 @@ class FluidSimulationEngine {
   private wake() {
     this.lastInput = this.view.performance.now();
     this.active = true;
-    if (!this.frame && this.visible) {
+    this.fading = false;
+    if (!this.frame && this.visible && !this.contextLost) {
       this.lastTime = this.lastInput;
       this.frame = this.view.requestAnimationFrame(this.update);
     }
@@ -1049,7 +1108,7 @@ class FluidSimulationEngine {
     if (!this.linear) this.u2f(prog.advection, "dyeTexelSize", dye.texelX, dye.texelY);
     this.u1i(prog.advection, "uVelocity", this.attachTex(vel.read, 0));
     this.u1i(prog.advection, "uSource", this.attachTex(dye.read, 1));
-    this.u1f(prog.advection, "dissipation", this.cfg.densityDissipation);
+    this.u1f(prog.advection, "dissipation", this.cfg.densityDissipation + (this.fading ? FADE_OUT_DISSIPATION : 0));
     this.blit(dye.write);
     dye.swap();
   }
@@ -1166,6 +1225,11 @@ class FluidSimulationEngine {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     gl.useProgram(null);
     this.prog = null;
+    this.dye = null;
+    this.velocity = null;
+    this.divergence = null;
+    this.curlFbo = null;
+    this.pressure = null;
   }
 }
 
@@ -1197,9 +1261,8 @@ export const PointerRipples: React.FC<PointerRipplesProps> = ({
     const canvas = canvasRef.current;
     if (!canvas || typeof window === "undefined") return;
 
-    // Check accessibility & coarse pointer
+    // Respect the OS-level reduced-motion preference by not starting the effect at all.
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const coarsePointer = window.matchMedia("(pointer: coarse)");
     if (reduceMotion.matches) return;
 
     let engine: FluidSimulationEngine | null = null;
@@ -1242,24 +1305,65 @@ export const PointerRipples: React.FC<PointerRipplesProps> = ({
       engine.splat(e.clientX, e.clientY);
     };
 
-    const onResize = () => {
-      engine?.resize();
-    };
-
     const onVisibility = () => {
       engine?.setVisible(!document.hidden);
     };
 
+    const onPointerLeave = (e: PointerEvent) => {
+      if (!e.isPrimary) return;
+      engine?.releasePointer();
+    };
+
+    const onPointerCancel = () => {
+      engine?.releasePointer();
+    };
+
+    const onWindowBlur = () => {
+      engine?.releasePointer();
+    };
+
+    const onContextLost = (e: Event) => {
+      // Preventing the default lets the browser attempt a restore instead of
+      // leaving the canvas permanently blank.
+      e.preventDefault();
+      engine?.handleContextLost();
+    };
+
+    const onContextRestored = () => {
+      engine?.handleContextRestored();
+    };
+
+    // Track the CSS box here so the frame loop never forces a layout read.
+    const sizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver((entries) => {
+            const rect = entries[0]?.contentRect;
+            if (!rect || !engine) return;
+            engine.setViewportSize(rect.width, rect.height);
+            engine.resize();
+          });
+    sizeObserver?.observe(canvas);
+
     window.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
     window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: true });
-    window.addEventListener("resize", onResize);
+    window.addEventListener("pointercancel", onPointerCancel, { capture: true, passive: true });
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("pointerleave", onPointerLeave);
     document.addEventListener("visibilitychange", onVisibility);
+    canvas.addEventListener("webglcontextlost", onContextLost);
+    canvas.addEventListener("webglcontextrestored", onContextRestored);
 
     return () => {
+      sizeObserver?.disconnect();
       window.removeEventListener("pointermove", onPointerMove, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("pointercancel", onPointerCancel, true);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("pointerleave", onPointerLeave);
       document.removeEventListener("visibilitychange", onVisibility);
+      canvas.removeEventListener("webglcontextlost", onContextLost);
+      canvas.removeEventListener("webglcontextrestored", onContextRestored);
       engine?.destroy();
       engine = null;
     };

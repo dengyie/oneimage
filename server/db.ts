@@ -48,8 +48,17 @@ export function initDatabase(dbPath?: string): AppDatabase {
 
   const db = new DatabaseSync(targetPath)
 
-  // Enable WAL and foreign keys
-  db.exec('PRAGMA journal_mode = WAL;')
+  // Production keeps this file on an NFS mount, where SQLite's WAL mode is
+  // unsupported: the -shm index is shared memory mapped over a network
+  // filesystem, so its bookkeeping can silently diverge from the log. A
+  // rollback journal needs no shared memory and stays safe for the single
+  // writer process this server runs. Set ONEIMAGE_DB_JOURNAL=WAL only when the
+  // database lives on a local disk.
+  const journalMode = (process.env.ONEIMAGE_DB_JOURNAL ?? 'TRUNCATE').toUpperCase()
+  const journalModes = ['DELETE', 'TRUNCATE', 'PERSIST', 'WAL']
+  db.exec(`PRAGMA journal_mode = ${journalModes.includes(journalMode) ? journalMode : 'TRUNCATE'};`)
+  // FULL keeps each commit durable on the network filesystem.
+  db.exec('PRAGMA synchronous = FULL;')
   db.exec('PRAGMA foreign_keys = ON;')
 
   // Create tables

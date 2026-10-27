@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The database holds password hashes, session tokens and cloud projects, so
+# every file this process creates must stay private to the service account.
+umask 077
+
 root=/personal/pxed/oneimage
 current="$root/current"
 release=''
@@ -22,7 +26,8 @@ set -a
 . "$root/.env"
 set +a
 
-mkdir -p "$root/data"
+mkdir -p -m 700 "$root/data"
+chmod 700 "$root/data" 2>/dev/null || true
 export ONEIMAGE_DB_PATH="${ONEIMAGE_DB_PATH:-$root/data/oneimage.db}"
 
 node_bin="/usr/local/bin/node"
