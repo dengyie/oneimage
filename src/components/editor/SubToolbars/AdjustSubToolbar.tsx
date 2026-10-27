@@ -1,10 +1,12 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { Adjustments } from '../../../domain/editor-state'
 import { UiIcon } from '../../ui/UiIcon'
 
 interface AdjustSubToolbarProps {
   adjustments: Adjustments
   onChange: (adjustments: Adjustments) => void
+  /** Ends a live adjustment sweep so it becomes one undoable step. */
+  onCommit: () => void
   onReset: () => void
 }
 
@@ -34,16 +36,48 @@ const PRESETS: Array<{ label: string; values: Adjustments }> = [
 export const AdjustSubToolbar: React.FC<AdjustSubToolbarProps> = ({
   adjustments,
   onChange,
+  onCommit,
   onReset,
 }) => {
   const [activeTab, setActiveTab] = useState<'presets' | 'sliders'>('presets')
+  const commitTimerRef = useRef<number | null>(null)
+
+  const clearCommitTimer = () => {
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current)
+      commitTimerRef.current = null
+    }
+  }
+
+  // Sliders change continuously; the sweep ends when the pointer is released,
+  // the key is lifted or the value settles, and that is one undoable step.
+  const scheduleCommit = () => {
+    clearCommitTimer()
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null
+      onCommit()
+    }, 400)
+  }
+
+  const commitNow = () => {
+    clearCommitTimer()
+    onCommit()
+  }
+
+  useEffect(() => clearCommitTimer, [])
 
   const updateField = (field: keyof Adjustments, value: number) => {
     onChange({ ...adjustments, [field]: value })
+    scheduleCommit()
   }
 
   return (
-    <div className="flex flex-col gap-2 p-2.5 rounded-2xl bg-zinc-900/95 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300 max-w-sm w-full">
+    <div
+      className="flex flex-col gap-2 p-2.5 rounded-2xl bg-zinc-900/95 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300 max-w-sm w-full"
+      onPointerUp={commitNow}
+      onKeyUp={commitNow}
+      onBlur={commitNow}
+    >
       {/* Tab toggle: Presets vs Sliders */}
       <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
         <div className="flex items-center gap-1">
@@ -90,7 +124,10 @@ export const AdjustSubToolbar: React.FC<AdjustSubToolbarProps> = ({
             return (
               <button
                 key={p.label}
-                onClick={() => onChange(p.values)}
+                onClick={() => {
+                  onChange(p.values)
+                  commitNow()
+                }}
                 className={`flex-1 py-1.5 px-2 rounded-xl text-[11px] text-center transition-all ${
                   isMatch
                     ? 'bg-emerald-500 text-zinc-950 font-medium shadow-md shadow-emerald-500/20'

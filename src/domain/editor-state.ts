@@ -58,11 +58,13 @@ export interface EditorState {
   annotations?: readonly AnnotationLayer[]
 }
 
-export interface EditorHistory {
-  past: readonly EditorState[]
-  present: EditorState
-  future: readonly EditorState[]
+export interface HistoryTree<T> {
+  past: readonly T[]
+  present: T
+  future: readonly T[]
 }
+
+export type EditorHistory = HistoryTree<EditorState>
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = Object.freeze({
   brightness: 0,
@@ -138,17 +140,59 @@ export function rotatedDimensions(width: number, height: number, rotation: numbe
 
 function roundDimension(value: number): number { return Math.max(1, Math.ceil(value - 1e-9)) }
 
-export function pushHistory(history: EditorHistory, next: EditorState): EditorHistory {
+function rectsEqual(a: Rect, b: Rect): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+function adjustmentsEqual(a: Adjustments, b: Adjustments): boolean {
+  return (
+    a.brightness === b.brightness &&
+    a.contrast === b.contrast &&
+    a.saturation === b.saturation &&
+    a.sharpen === b.sharpen &&
+    a.blur === b.blur
+  )
+}
+
+/**
+ * Cheap structural comparison used to skip no-op history entries. Annotation
+ * layers are immutable, so the arrays only need an element-wise identity check.
+ */
+export function editorStatesEqual(a: EditorState, b: EditorState): boolean {
+  if (a === b) return true
+  if (a.sourceWidth !== b.sourceWidth || a.sourceHeight !== b.sourceHeight) return false
+  if (a.rotation !== b.rotation || a.flipX !== b.flipX || a.flipY !== b.flipY) return false
+  if (a.aspectRatio !== b.aspectRatio || !rectsEqual(a.crop, b.crop)) return false
+  if (!adjustmentsEqual(a.adjustments, b.adjustments)) return false
+  if (a.localAdjustments.length !== b.localAdjustments.length) return false
+  for (let i = 0; i < a.localAdjustments.length; i++) {
+    const left = a.localAdjustments[i]
+    const right = b.localAdjustments[i]
+    if (left !== right && (!rectsEqual(left.rect, right.rect) || !adjustmentsEqual(left.adjustments, right.adjustments))) {
+      return false
+    }
+  }
+  const annotationsA = a.annotations ?? []
+  const annotationsB = b.annotations ?? []
+  if (annotationsA.length !== annotationsB.length) return false
+  for (let i = 0; i < annotationsA.length; i++) {
+    // A layer that changed is always a new object; identity is enough here.
+    if (annotationsA[i] !== annotationsB[i]) return false
+  }
+  return true
+}
+
+export function pushHistory<T>(history: HistoryTree<T>, next: T): HistoryTree<T> {
   return { past: [...history.past, history.present], present: next, future: [] }
 }
 
-export function undoHistory(history: EditorHistory): EditorHistory {
+export function undoHistory<T>(history: HistoryTree<T>): HistoryTree<T> {
   const previous = history.past.at(-1)
   if (!previous) return history
   return { past: history.past.slice(0, -1), present: previous, future: [history.present, ...history.future] }
 }
 
-export function redoHistory(history: EditorHistory): EditorHistory {
+export function redoHistory<T>(history: HistoryTree<T>): HistoryTree<T> {
   const next = history.future[0]
   if (!next) return history
   return { past: [...history.past, history.present], present: next, future: history.future.slice(1) }

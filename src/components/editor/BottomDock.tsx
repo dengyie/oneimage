@@ -49,6 +49,7 @@ interface BottomDockProps {
   // Adjust props
   adjustments: Adjustments
   onAdjustmentsChange: (adjustments: Adjustments) => void
+  onAdjustmentsCommit: () => void
   onAdjustmentsReset: () => void
 
   // Watermark props
@@ -109,6 +110,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onTextSizeSelect,
   adjustments,
   onAdjustmentsChange,
+  onAdjustmentsCommit,
   onAdjustmentsReset,
   onAddWatermark,
   onAddEraseRegion,
@@ -173,6 +175,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
           <AdjustSubToolbar
             adjustments={adjustments}
             onChange={onAdjustmentsChange}
+            onCommit={onAdjustmentsCommit}
             onReset={onAdjustmentsReset}
           />
         )}

@@ -3,17 +3,29 @@ import { validateImageFile } from './application/file-policy'
 import { exportEditor, type DecodedSource } from './application/editor-renderer'
 import { createBrowserCanvasFactory, decodeEditorSource } from './infrastructure/editor-canvas'
 import {
-  type EditorHistory,
   type EditorState,
   type Adjustments,
   type TextBgStyle,
   createEditorState,
-  pushHistory,
-  undoHistory,
-  redoHistory,
   normalizeAspectRatio,
   rotateEditorState,
 } from './domain/editor-state'
+import {
+  EMPTY_SESSION,
+  canRedoSession,
+  canUndoSession,
+  commitDraft,
+  commitState,
+  commitVisibleState,
+  liveEdit,
+  openDocument,
+  redoSession,
+  sessionSnapshot,
+  sessionState,
+  undoSession,
+  type EditorSession,
+  type EditorSnapshot,
+} from './domain/editor-session'
 import {
   checkProvenance,
   createProvenanceInput,
@@ -74,8 +86,16 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   // Editor Domain History
-  const [history, setHistory] = useState<EditorHistory | null>(null)
+  const [session, setSession] = useState<EditorSession>(EMPTY_SESSION)
+  const sessionRef = useRef(session)
+  const switchingDocumentRef = useRef(false)
   const currentDraftIdRef = useRef<string | null>(null)
+
+  // Keep the ref pointing at the latest committed render; async document
+  // switches read the tree before they replace it.
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
 
   // Active User & Auth State
   const [currentUser, setCurrentUser] = useState<SafeUser | null>(null)
@@ -182,19 +202,17 @@ export function App() {
     void refreshHistory()
   }, [refreshHistory])
 
-  // History state updates
-  const currentState = history?.present || null
+  // Visible editor state: live gesture output wins over the committed snapshot.
+  const currentState = sessionState(session)
 
   // Auto-persist the current draft (debounced) whenever the editor state
   // changes. One effect owns persistence so commit/undo/redo/revert all flow
   // through it without side effects inside state updaters.
   const persistWarnedRef = useRef(false)
-  const pendingPersistRef = useRef<{ file: File; state: EditorState; source: DecodedSource } | null>(null)
+  const pendingPersistRef = useRef<{ draftId: string; file: File; state: EditorState; source: DecodedSource } | null>(null)
 
   const persistDraftNow = useCallback(
-    async (targetFile: File, state: EditorState, source: DecodedSource) => {
-      const draftId = currentDraftIdRef.current
-      if (!draftId) return
+    async (draftId: string, targetFile: File, state: EditorState, source: DecodedSource) => {
       try {
         // The storage layer owns the per-draft invariants: it preserves cloud
         // linkage across upserts, reuses the stored thumbnail (the original
@@ -236,17 +254,17 @@ export function App() {
   )
 
   useEffect(() => {
-    const state = history?.present
-    if (!file || !decodedSource || !state) return
-    pendingPersistRef.current = { file, state, source: decodedSource }
+    const draftId = currentDraftIdRef.current
+    if (!file || !decodedSource || !currentState || !draftId) return
+    pendingPersistRef.current = { draftId, file, state: currentState, source: decodedSource }
     const timer = window.setTimeout(() => {
       const pending = pendingPersistRef.current
       if (!pending) return
       pendingPersistRef.current = null
-      void persistDraftNow(pending.file, pending.state, pending.source)
+      void persistDraftNow(pending.draftId, pending.file, pending.state, pending.source)
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [file, decodedSource, history?.present, persistDraftNow])
+  }, [file, decodedSource, currentState, persistDraftNow])
 
   // Flush a pending debounced save before the page goes away, so a quick edit
   // followed by a tab close still lands in IndexedDB.
@@ -254,7 +272,7 @@ export function App() {
     const pending = pendingPersistRef.current
     if (!pending) return
     pendingPersistRef.current = null
-    void persistDraftNow(pending.file, pending.state, pending.source)
+    void persistDraftNow(pending.draftId, pending.file, pending.state, pending.source)
   }, [persistDraftNow])
 
   useEffect(() => {
@@ -262,7 +280,7 @@ export function App() {
       const pending = pendingPersistRef.current
       if (!pending) return
       pendingPersistRef.current = null
-      void persistDraftNow(pending.file, pending.state, pending.source)
+      void persistDraftNow(pending.draftId, pending.file, pending.state, pending.source)
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') flush()
@@ -275,7 +293,8 @@ export function App() {
     }
   }, [persistDraftNow])
 
-  // Load and decode an image file
+  // Open or replace the working image. Replacing keeps the previous document in
+  // the undo tree, so an accidental switch can be walked back.
   const loadFile = useCallback(
     async (nextFile: File) => {
       const validation = validateImageFile(nextFile)
@@ -289,21 +308,23 @@ export function App() {
       setIsProcessing(true)
 
       try {
+        // Persist the outgoing draft while its bitmap is still open.
+        flushPendingPersist()
         const decoded = await decodeEditorSource(nextFile)
-        decodedSource?.close()
         setFile(nextFile)
         setDecodedSource(decoded)
 
-        const initial = createEditorState(decoded.width, decoded.height)
-        setHistory({ past: [], present: initial, future: [] })
+        const snapshot: EditorSnapshot = {
+          docId: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          file: nextFile,
+          state: createEditorState(decoded.width, decoded.height),
+        }
+        currentDraftIdRef.current = snapshot.docId
+        setSession((prev) => openDocument(prev, snapshot))
         setActiveTool('none')
         setProvenanceResult(null)
         setProvenanceResultDetail(null)
         setProvenanceError(null)
-
-        // Assign new draft ID
-        const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-        currentDraftIdRef.current = draftId
 
         // Fit image nicely into screen viewport
         const margin = 120
@@ -324,32 +345,96 @@ export function App() {
         setIsProcessing(false)
       }
     },
-    [decodedSource, showToast]
+    [flushPendingPersist, showToast]
   )
 
-  // History state updates
+  // Live gesture output (crop drag, slider sweep): visible, not yet undoable.
   const handleStateChange = useCallback((nextState: EditorState) => {
-    setHistory((prev) => (prev ? { ...prev, present: nextState } : null))
+    setSession((prev) => liveEdit(prev, nextState))
   }, [])
 
+  // End of a gesture: records the state the gesture started from.
   const handleCommitHistory = useCallback((nextState: EditorState) => {
-    setHistory((prev) => (prev ? pushHistory(prev, nextState) : null))
+    setSession((prev) => commitState(prev, nextState))
   }, [])
+
+  // Discrete action (rotate, flip, preset): undo also restores an uncommitted draft.
+  const handleCommit = useCallback((nextState: EditorState) => {
+    setSession((prev) => commitVisibleState(prev, nextState))
+  }, [])
+
+  const handleCommitDraft = useCallback(() => {
+    setSession((prev) => commitDraft(prev))
+  }, [])
+
+  // Undo and redo can land on a different image, so the target bitmap is
+  // decoded before the session swaps: the canvas never renders one document's
+  // parameters against another document's pixels.
+  const applySession = useCallback(
+    async (next: EditorSession) => {
+      const target = next.history?.present
+      const active = sessionSnapshot(sessionRef.current)
+      if (!target || (active && active.docId === target.docId)) {
+        sessionRef.current = next
+        setSession(next)
+        return
+      }
+      if (switchingDocumentRef.current) return
+      switchingDocumentRef.current = true
+      setIsProcessing(true)
+      try {
+        // Persist the outgoing draft while its bitmap is still open.
+        flushPendingPersist()
+        const decoded = await decodeEditorSource(target.file)
+        setFile(target.file)
+        setDecodedSource(decoded)
+        currentDraftIdRef.current = target.docId
+        setActiveTool('none')
+        setProvenanceResult(null)
+        setProvenanceResultDetail(null)
+        setProvenanceError(null)
+
+        const margin = 120
+        const fitScale = Math.min(
+          1.0,
+          Math.min((window.innerWidth - margin) / decoded.width, (window.innerHeight - margin) / decoded.height)
+        )
+        setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
+        setPanOffset({ x: 0, y: 0 })
+
+        sessionRef.current = next
+        setSession(next)
+      } catch (err) {
+        console.error('Failed to switch document:', err)
+        showToast('切换画布失败，请重试', 'error')
+      } finally {
+        switchingDocumentRef.current = false
+        setIsProcessing(false)
+      }
+    },
+    [flushPendingPersist, showToast]
+  )
 
   const handleUndo = useCallback(() => {
-    setHistory((prev) => (prev ? undoHistory(prev) : null))
-  }, [])
+    const previous = sessionRef.current
+    const next = undoSession(previous)
+    if (next === previous) return
+    void applySession(next)
+  }, [applySession])
 
   const handleRedo = useCallback(() => {
-    setHistory((prev) => (prev ? redoHistory(prev) : null))
-  }, [])
+    const previous = sessionRef.current
+    const next = redoSession(previous)
+    if (next === previous) return
+    void applySession(next)
+  }, [applySession])
 
   const handleRevert = useCallback(() => {
     if (!decodedSource || !file) return
-    const initial = createEditorState(decodedSource.width, decodedSource.height)
-    setHistory((prev) => (prev ? pushHistory(prev, initial) : null))
+    // Resetting is a normal step in the tree, so it can be undone like any edit.
+    handleCommit(createEditorState(decodedSource.width, decodedSource.height))
     showToast('已还原为原始状态', 'info')
-  }, [decodedSource, file, showToast])
+  }, [decodedSource, file, handleCommit, showToast])
 
   // Crop controls
   const handleRatioSelect = useCallback(
@@ -357,66 +442,53 @@ export function App() {
       if (!currentState) return
       setCropRatio(ratioStr)
       const ratio = normalizeAspectRatio(ratioStr)
-      const next = { ...currentState, aspectRatio: ratio }
-      handleStateChange(next)
-      handleCommitHistory(next)
+      handleCommit({ ...currentState, aspectRatio: ratio })
     },
-    [currentState, handleStateChange, handleCommitHistory]
+    [currentState, handleCommit]
   )
 
   const handleRotate90 = useCallback(() => {
     if (!currentState) return
-    const next = rotateEditorState(currentState, 1)
-    handleStateChange(next)
-    handleCommitHistory(next)
-  }, [currentState, handleStateChange, handleCommitHistory])
+    handleCommit(rotateEditorState(currentState, 1))
+  }, [currentState, handleCommit])
 
   const handleFlipH = useCallback(() => {
     if (!currentState) return
-    const next = { ...currentState, flipX: !currentState.flipX }
-    handleStateChange(next)
-    handleCommitHistory(next)
-  }, [currentState, handleStateChange, handleCommitHistory])
+    handleCommit({ ...currentState, flipX: !currentState.flipX })
+  }, [currentState, handleCommit])
 
   const handleFlipV = useCallback(() => {
     if (!currentState) return
-    const next = { ...currentState, flipY: !currentState.flipY }
-    handleStateChange(next)
-    handleCommitHistory(next)
-  }, [currentState, handleStateChange, handleCommitHistory])
+    handleCommit({ ...currentState, flipY: !currentState.flipY })
+  }, [currentState, handleCommit])
 
   const handleResetCrop = useCallback(() => {
     if (!currentState || !decodedSource) return
-    const next = {
+    setCropRatio('free')
+    handleCommit({
       ...currentState,
       crop: { x: 0, y: 0, width: decodedSource.width, height: decodedSource.height },
       aspectRatio: null,
-    }
-    setCropRatio('free')
-    handleStateChange(next)
-    handleCommitHistory(next)
-  }, [currentState, decodedSource, handleStateChange, handleCommitHistory])
+    })
+  }, [currentState, decodedSource, handleCommit])
 
   // Adjustments change
   const handleAdjustmentsChange = useCallback(
     (adj: Adjustments) => {
       if (!currentState) return
-      const next = { ...currentState, adjustments: adj }
-      handleStateChange(next)
+      handleStateChange({ ...currentState, adjustments: adj })
     },
     [currentState, handleStateChange]
   )
 
   const handleAdjustmentsReset = useCallback(() => {
     if (!currentState) return
-    const next = {
+    handleCommit({
       ...currentState,
       adjustments: { brightness: 0, contrast: 0, saturation: 0, sharpen: 0, blur: 0 },
-    }
-    handleStateChange(next)
-    handleCommitHistory(next)
+    })
     showToast('调色已重置', 'info')
-  }, [currentState, handleStateChange, handleCommitHistory, showToast])
+  }, [currentState, handleCommit, showToast])
 
   // Export to Blob
   const exportImage = useCallback(
@@ -569,11 +641,10 @@ export function App() {
         ...currentState,
         annotations: [...(currentState.annotations || []), newLayer],
       }
-      handleStateChange(next)
-      handleCommitHistory(next)
+      handleCommit(next)
       showToast(options.layout === 'tile' ? '已添加平铺全图防盗水印' : '已添加右下角署名水印', 'success')
     },
-    [currentState, handleStateChange, handleCommitHistory, showToast]
+    [currentState, handleCommit, showToast]
   )
 
   const handleAddEraseRegion = useCallback(
@@ -612,11 +683,10 @@ export function App() {
         ...currentState,
         annotations: [...(currentState.annotations || []), newLayer],
       }
-      handleStateChange(next)
-      handleCommitHistory(next)
+      handleCommit(next)
       showToast('已在画面中央生成水印消除遮罩选区（支持自由移动或缩放）', 'success')
     },
-    [currentState, handleStateChange, handleCommitHistory, showToast]
+    [currentState, handleCommit, showToast]
   )
 
   const handleCheckProvenanceTarget = useCallback(
@@ -676,14 +746,19 @@ export function App() {
         const local = item.localItem
         setIsProcessing(true)
         try {
+          // Persist the outgoing draft while its bitmap is still open.
+          flushPendingPersist()
           const restoredFile = new File([local.originalBlob], local.fileName, { type: local.mimeType })
           const decoded = await decodeEditorSource(restoredFile)
-          decodedSource?.close()
           setFile(restoredFile)
           setDecodedSource(decoded)
-          setHistory({ past: [], present: local.editorState, future: [] })
           currentDraftIdRef.current = local.id
           setActiveTool('none')
+
+          // Restoring is a document switch, so it joins the undo tree: the
+          // image that was open stays one undo away.
+          const snapshot: EditorSnapshot = { docId: local.id, file: restoredFile, state: local.editorState }
+          setSession((prev) => openDocument(prev, snapshot))
 
           // Fit viewport
           const margin = 120
@@ -727,7 +802,7 @@ export function App() {
         showToast('该云端草稿的原图未缓存在当前浏览器中，请先在原设备使用或重新拖入原图', 'info')
       }
     },
-    [decodedSource, localHistoryItems, showToast]
+    [flushPendingPersist, localHistoryItems, showToast]
   )
 
   // Fast direct download from history drawer
@@ -975,8 +1050,8 @@ export function App() {
             fileSize={file.size}
             dimensions={{ width: decodedSource.width, height: decodedSource.height }}
             zoomPercent={Math.round(zoomScale * 100)}
-            canUndo={history ? history.past.length > 0 : false}
-            canRedo={history ? history.future.length > 0 : false}
+            canUndo={canUndoSession(session)}
+            canRedo={canRedoSession(session)}
             isComparingOriginal={isComparingOriginal}
             isProcessing={isProcessing}
             onUndo={handleUndo}
@@ -1057,6 +1132,7 @@ export function App() {
             onTextSizeSelect={setTextSize}
             adjustments={currentState.adjustments}
             onAdjustmentsChange={handleAdjustmentsChange}
+            onAdjustmentsCommit={handleCommitDraft}
             onAdjustmentsReset={handleAdjustmentsReset}
             onAddWatermark={handleAddWatermark}
             onAddEraseRegion={handleAddEraseRegion}
