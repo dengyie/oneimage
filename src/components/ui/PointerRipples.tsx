@@ -19,19 +19,19 @@ export interface PointerRipplesProps {
   simResolution?: number;
   /** Dye texture resolution (default 768) */
   dyeResolution?: number;
-  /** Rate at which dye dissipates/fades (default 4.6) */
+  /** Rate at which dye dissipates/fades (default 2.4) */
   densityDissipation?: number;
-  /** Rate at which fluid velocity slows down (default 2.6) */
+  /** Rate at which fluid velocity slows down (default 1.6) */
   velocityDissipation?: number;
   /** Pressure coefficient (default 0.8) */
   pressure?: number;
   /** Number of Jacobi iterations for pressure solver (default 20) */
   pressureIterations?: number;
-  /** Fluid vorticity / curl strength (default 10) */
+  /** Fluid vorticity / curl strength (default 13) */
   curl?: number;
-  /** Splat radius relative to canvas (default 0.15) */
+  /** Splat radius relative to canvas (default 0.24) */
   splatRadius?: number;
-  /** Force exerted by pointer velocity (default 4200) */
+  /** Force exerted by pointer velocity (default 4800) */
   splatForce?: number;
   /** Enable 3D diffuse lighting & shading on dye surfaces (default true) */
   shading?: boolean;
@@ -39,11 +39,11 @@ export interface PointerRipplesProps {
   colorSpeed?: number;
   /** Hue shift step per pointer trail point (default 0.012) */
   colorStep?: number;
-  /** Dye color saturation [0-1] (default 0.6) */
+  /** Dye color saturation [0-1] (default 0.72) */
   colorSaturation?: number;
   /** Dye color brightness [0-1] (default 1.0) */
   colorValue?: number;
-  /** Dye color opacity / intensity multiplier (default 0.15) */
+  /** Dye color opacity / intensity multiplier (default 0.26) */
   colorIntensity?: number;
   /** Milliseconds of pointer inactivity before pausing RAF loop (default 4000) */
   idleMs?: number;
@@ -53,7 +53,7 @@ export interface PointerRipplesProps {
   className?: string;
   /** Custom canvas inline styles */
   style?: React.CSSProperties;
-  /** Overall opacity (default 0.3) */
+  /** Overall opacity (default 0.58) */
   opacity?: number;
 }
 
@@ -289,14 +289,14 @@ void main () {
   vec3 bottom = texture2D(uTexture, vB).rgb;
   float dx = length(right) - length(left);
   float dy = length(top) - length(bottom);
-  vec3 normal = normalize(vec3(dx, dy, length(texelSize) * 3.0));
-  float diffuse = clamp(dot(normal, vec3(0.0, 0.0, 1.0)) + 0.85, 0.85, 1.0);
+  vec3 normal = normalize(vec3(dx, dy, length(texelSize) * 2.5));
+  float diffuse = clamp(dot(normal, vec3(0.0, 0.0, 1.0)) + 0.80, 0.80, 1.0);
   color *= diffuse;
 #endif
 
   float peak = max(color.r, max(color.g, color.b));
   color = min(linearToGamma(color), vec3(1.0));
-  float alpha = clamp(peak * 1.35, 0.0, 1.0);
+  float alpha = clamp(peak * 1.4, 0.0, 1.0);
   gl_FragColor = vec4(color, alpha);
 }
 `;
@@ -411,19 +411,19 @@ class FluidSimulationEngine {
     this.cfg = {
       simResolution: options.simResolution ?? 128,
       dyeResolution: options.dyeResolution ?? 768,
-      densityDissipation: options.densityDissipation ?? 4.6,
-      velocityDissipation: options.velocityDissipation ?? 2.6,
+      densityDissipation: options.densityDissipation ?? 2.4,
+      velocityDissipation: options.velocityDissipation ?? 1.6,
       pressure: options.pressure ?? 0.8,
       pressureIterations: options.pressureIterations ?? 20,
-      curl: options.curl ?? 10,
-      splatRadius: options.splatRadius ?? 0.15,
-      splatForce: options.splatForce ?? 4200,
+      curl: options.curl ?? 13,
+      splatRadius: options.splatRadius ?? 0.24,
+      splatForce: options.splatForce ?? 4800,
       shading: options.shading ?? true,
       colorSpeed: options.colorSpeed ?? 0.055,
       colorStep: options.colorStep ?? 0.012,
-      colorSaturation: options.colorSaturation ?? 0.6,
+      colorSaturation: options.colorSaturation ?? 0.72,
       colorValue: options.colorValue ?? 1.0,
-      colorIntensity: options.colorIntensity ?? 0.15,
+      colorIntensity: options.colorIntensity ?? 0.26,
       idleMs: options.idleMs ?? 4000,
       maxPixelRatio: options.maxPixelRatio ?? 1.5,
     };
@@ -538,8 +538,8 @@ class FluidSimulationEngine {
       ...pt,
       vx: 0,
       vy: 0,
-      color: this.makeColor(hue, 1.2),
-      radius: 0.16,
+      color: this.makeColor(hue, 1.4),
+      radius: 0.19,
     });
 
     for (let i = 0; i < 6; i += 1) {
@@ -550,10 +550,10 @@ class FluidSimulationEngine {
       );
       this.queue({
         ...subPt,
-        vx: Math.cos(angle) * 120,
-        vy: -Math.sin(angle) * 120,
-        color: this.makeColor(hue + i / 6, 1.4),
-        radius: 0.09,
+        vx: Math.cos(angle) * 140,
+        vy: -Math.sin(angle) * 140,
+        color: this.makeColor(hue + i / 6, 1.7),
+        radius: 0.11,
       });
     }
 
@@ -1236,24 +1236,24 @@ class FluidSimulationEngine {
 export const PointerRipples: React.FC<PointerRipplesProps> = ({
   simResolution = 128,
   dyeResolution = 768,
-  densityDissipation = 4.6,
-  velocityDissipation = 2.6,
+  densityDissipation = 2.4,
+  velocityDissipation = 1.6,
   pressure = 0.8,
   pressureIterations = 20,
-  curl = 10,
-  splatRadius = 0.15,
-  splatForce = 4200,
+  curl = 13,
+  splatRadius = 0.24,
+  splatForce = 4800,
   shading = true,
   colorSpeed = 0.055,
   colorStep = 0.012,
-  colorSaturation = 0.6,
+  colorSaturation = 0.72,
   colorValue = 1.0,
-  colorIntensity = 0.15,
+  colorIntensity = 0.26,
   idleMs = 4000,
   maxPixelRatio = 1.5,
   className = "fixed inset-0 pointer-events-none w-full h-full -z-10",
   style,
-  opacity = 0.3,
+  opacity = 0.58,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
