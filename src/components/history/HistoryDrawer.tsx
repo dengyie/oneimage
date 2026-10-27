@@ -324,14 +324,16 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     </button>
                     <button
                       onClick={() => {
-                        // A cloud draft holds the only surviving copy of the
-                        // edit state when the original device is gone; never
-                        // destroy that with a single mis-click.
-                        if (item.cloudItem) {
-                          const scope = item.localItem ? '本地与云端副本' : '云端副本（当前浏览器无本地原图，删除后无法恢复）'
-                          if (!window.confirm(`确认删除草稿「${item.title}」？将同时移除${scope}。`)) {
-                            return
-                          }
+                        // Deleting is irreversible on both sides: a cloud draft
+                        // may be the only surviving copy, and a local-only draft
+                        // carries the sole record of the edit. Confirm either way.
+                        const scope = item.cloudItem
+                          ? item.localItem
+                            ? '本地与云端副本'
+                            : '云端副本（当前浏览器无本地原图，删除后无法恢复）'
+                          : '本地草稿（删除后无法恢复）'
+                        if (!window.confirm(`确认删除草稿「${item.title}」？将同时移除${scope}。`)) {
+                          return
                         }
                         onDeleteItem(item)
                       }}

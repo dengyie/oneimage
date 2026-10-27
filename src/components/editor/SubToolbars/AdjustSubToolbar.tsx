@@ -42,6 +42,12 @@ export const AdjustSubToolbar: React.FC<AdjustSubToolbarProps> = ({
   const [activeTab, setActiveTab] = useState<'presets' | 'sliders'>('presets')
   const commitTimerRef = useRef<number | null>(null)
 
+  // The unmount cleanup needs the latest onCommit without re-running the effect.
+  const commitRef = useRef(onCommit)
+  useEffect(() => {
+    commitRef.current = onCommit
+  }, [onCommit])
+
   const clearCommitTimer = () => {
     if (commitTimerRef.current !== null) {
       window.clearTimeout(commitTimerRef.current)
@@ -64,7 +70,18 @@ export const AdjustSubToolbar: React.FC<AdjustSubToolbarProps> = ({
     onCommit()
   }
 
-  useEffect(() => clearCommitTimer, [])
+  // Switching tool or pressing Escape unmounts this panel mid-sweep. Commit
+  // instead of clearing the timer: the adjustment is already visible on the
+  // canvas, and dropping it would leave the undo tree out of sync with it.
+  useEffect(
+    () => () => {
+      if (commitTimerRef.current !== null) {
+        commitTimerRef.current = null
+        commitRef.current()
+      }
+    },
+    []
+  )
 
   const updateField = (field: keyof Adjustments, value: number) => {
     onChange({ ...adjustments, [field]: value })

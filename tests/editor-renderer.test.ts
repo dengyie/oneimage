@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderEditor, resolveRenderDimensions, schedulePreview, type CanvasFactory, type DecodedSource, type RenderCanvas } from '../src/application/editor-renderer'
+import { PREVIEW_MAX_EDGE, planRenderDimensions, renderEditor, resolveRenderDimensions, schedulePreview, type CanvasFactory, type DecodedSource, type RenderCanvas } from '../src/application/editor-renderer'
 import { createEditorState } from '../src/domain/editor-state'
 
 describe('editor renderer', () => {
@@ -290,5 +290,55 @@ describe('editor renderer', () => {
     expect(cornerFills.length).toBe(1)
     expect(cornerFills[0].x).toBeGreaterThan(200)
     expect(cornerFills[0].y).toBeGreaterThan(200)
+  })
+})
+
+describe('render plan', () => {
+  const stubFactory = (): CanvasFactory => ({
+    create: (width, height) => ({
+      width,
+      height,
+      getContext: () =>
+        new Proxy(
+          { canvas: { width, height } },
+          {
+            get: (target, prop) =>
+              prop in target
+                ? (target as Record<string, unknown>)[prop as string]
+                : prop === 'measureText'
+                  ? () => ({ width: 10 })
+                  : prop === 'createLinearGradient' || prop === 'createRadialGradient'
+                    ? () => ({ addColorStop: () => {} })
+                    : () => {},
+          }
+        ) as never,
+    }),
+  })
+
+  it('derives the preview size from the state the renderer will draw', () => {
+    const small = createEditorState(640, 400)
+    expect(planRenderDimensions(small, PREVIEW_MAX_EDGE, false)).toEqual({ width: 640, height: 400 })
+
+    const cropped = createEditorState(5000, 2500)
+    cropped.crop = { x: 100, y: 100, width: 1000, height: 1000 }
+    // Not crop mode: the preview shows the crop itself, already under the edge.
+    expect(planRenderDimensions(cropped, PREVIEW_MAX_EDGE, false)).toEqual({ width: 1000, height: 1000 })
+    // Crop mode draws the full source, so the preview edge bounds it.
+    expect(planRenderDimensions(cropped, PREVIEW_MAX_EDGE, true)).toEqual({ width: 2400, height: 1200 })
+
+    const rotated = createEditorState(640, 400)
+    rotated.rotation = 90
+    expect(planRenderDimensions(rotated, PREVIEW_MAX_EDGE, false)).toEqual({ width: 400, height: 640 })
+  })
+
+  it('agrees with the bitmap renderEditor actually returns', () => {
+    const state = createEditorState(3000, 2000)
+    state.crop = { x: 10, y: 20, width: 1500, height: 900 }
+    state.rotation = 90
+    const source: DecodedSource = { width: 3000, height: 2000, draw: () => {}, close: () => {} }
+    const rendered = renderEditor(source, state, stubFactory(), { maxEdge: PREVIEW_MAX_EDGE, showFullSource: true })
+    expect({ width: rendered.width, height: rendered.height }).toEqual(
+      planRenderDimensions(state, PREVIEW_MAX_EDGE, true)
+    )
   })
 })

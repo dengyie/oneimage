@@ -1,4 +1,5 @@
 import React from 'react'
+import { ASPECT_RATIO_PRESETS } from '../../../domain/editor-state'
 import { UiIcon } from '../../ui/UiIcon'
 
 interface CropSubToolbarProps {
@@ -9,14 +10,6 @@ interface CropSubToolbarProps {
   onFlipV: () => void
   onResetCrop: () => void
 }
-
-const RATIO_PRESETS = [
-  { label: '自由', value: 'free' },
-  { label: '1:1', value: '1:1' },
-  { label: '4:3', value: '4:3' },
-  { label: '16:9', value: '16:9' },
-  { label: '9:16', value: '9:16' },
-]
 
 export const CropSubToolbar: React.FC<CropSubToolbarProps> = ({
   currentRatio,
@@ -30,12 +23,12 @@ export const CropSubToolbar: React.FC<CropSubToolbarProps> = ({
     <div className="flex max-w-full items-center overflow-x-auto whitespace-nowrap [&>*]:shrink-0 gap-1.5 px-3 py-1.5 rounded-2xl bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl text-xs text-zinc-300">
       {/* Ratio pills */}
       <div className="flex items-center gap-1">
-        {RATIO_PRESETS.map((p) => (
+        {ASPECT_RATIO_PRESETS.map((p) => (
           <button
-            key={p.value}
-            onClick={() => onRatioSelect(p.value)}
+            key={p.id}
+            onClick={() => onRatioSelect(p.id)}
             className={`px-2.5 py-1 rounded-xl text-[11px] font-mono transition-all ${
-              currentRatio === p.value
+              currentRatio === p.id
                 ? 'bg-emerald-500 text-zinc-950 font-medium shadow-md shadow-emerald-500/20'
                 : 'bg-zinc-800/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200'
             }`}

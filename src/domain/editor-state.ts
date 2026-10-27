@@ -125,6 +125,28 @@ export function normalizeAspectRatio(value: string): number | null {
   return width / height
 }
 
+/**
+ * The crop toolbar's ratio pills. The id doubles as the value
+ * `normalizeAspectRatio` parses, and `aspectRatioId` maps a stored ratio back
+ * to its pill, so the selected pill is derived from the editor state instead of
+ * being mirrored in component state that undo cannot restore.
+ */
+export const ASPECT_RATIO_PRESETS = [
+  { id: 'free', label: '自由', ratio: null },
+  { id: '1:1', label: '1:1', ratio: 1 },
+  { id: '4:3', label: '4:3', ratio: 4 / 3 },
+  { id: '16:9', label: '16:9', ratio: 16 / 9 },
+  { id: '9:16', label: '9:16', ratio: 9 / 16 },
+] as const satisfies ReadonlyArray<{ id: string; label: string; ratio: number | null }>
+
+export function aspectRatioId(ratio: number | null): string {
+  if (ratio === null) return 'free'
+  const match = ASPECT_RATIO_PRESETS.find(
+    (preset) => preset.ratio !== null && Math.abs(preset.ratio - ratio) < 1e-9
+  )
+  return match?.id ?? 'free'
+}
+
 export function rotatedDimensions(width: number, height: number, rotation: number): { width: number; height: number } {
   assertDimension(width, 'width')
   assertDimension(height, 'height')

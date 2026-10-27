@@ -1,4 +1,4 @@
-import { editorStatesEqual, type EditorState, type HistoryTree } from './editor-state'
+import { editorStatesEqual, type AnnotationLayer, type EditorState, type HistoryTree } from './editor-state'
 
 /**
  * A history entry is a whole document, not just its parameters: restoring a
@@ -52,32 +52,26 @@ export function liveEdit(session: EditorSession, next: EditorState): EditorSessi
   if (!session.history) return session
   const visible = sessionState(session)
   if (visible && editorStatesEqual(visible, next)) return session
-  // Editing after an undo abandons the redo branch.
-  return { history: { ...session.history, future: [] }, draft: next }
+  // The redo branch is abandoned when an edit is committed, not when a gesture
+  // starts: a sweep that returns to its starting value must keep redo alive.
+  return { history: session.history, draft: next }
 }
 
 /**
- * Records an edit whose final state is already visible. The pushed past entry
- * is the last committed state, which is what undo must return to.
+ * Commits whatever the live gesture produced (crop drag, slider sweep). The
+ * state comes from the session itself — never from a caller's render snapshot,
+ * which can lag a pointer move or predate the gesture.
  */
-export function commitState(session: EditorSession, next: EditorState): EditorSession {
-  const present = session.history?.present
-  if (!present) return session
-  if (editorStatesEqual(present.state, next)) {
-    // A commit that carries nothing new. A live draft that differs from it is
-    // still uncommitted work — a stale caller must not destroy it.
-    if (session.draft && !editorStatesEqual(session.draft, next)) return session
-    return { history: session.history, draft: null }
-  }
+export function commitDraft(session: EditorSession): EditorSession {
+  const { history, draft } = session
+  if (!history || !draft) return session
+  // A live draft always differs from the committed state (liveEdit filters
+  // no-ops); this also keeps a hand-built session from recording a duplicate.
+  if (editorStatesEqual(history.present.state, draft)) return { history, draft: null }
   return {
-    history: { past: [...(session.history?.past ?? []), present], present: { ...present, state: next }, future: [] },
+    history: { past: [...history.past, history.present], present: { ...history.present, state: draft }, future: [] },
     draft: null,
   }
-}
-
-/** Commits whatever the live gesture produced (crop drag, slider sweep). */
-export function commitDraft(session: EditorSession): EditorSession {
-  return session.draft ? commitState(session, session.draft) : session
 }
 
 /**
@@ -92,6 +86,28 @@ export function commitVisibleState(session: EditorSession, next: EditorState): E
     history: { past: [...(session.history?.past ?? []), visible], present: { ...visible, state: next }, future: [] },
     draft: null,
   }
+}
+
+/**
+ * Adds an annotation layer to whatever the user is looking at — an uncommitted
+ * gesture included — as one undoable step. The viewport hands over the layer
+ * alone so the state it is drawn onto always comes from the session.
+ */
+export function addAnnotationLayer(session: EditorSession, layer: AnnotationLayer): EditorSession {
+  const visible = visibleSnapshot(session)
+  if (!visible) return session
+  const annotations = [...(visible.state.annotations ?? []), layer]
+  return commitVisibleState(session, { ...visible.state, annotations })
+}
+
+/**
+ * Drops an in-flight gesture, restoring the committed state. A cancelled crop
+ * or slider sweep is not an edit the user meant to keep, and must not become an
+ * undo step.
+ */
+export function discardDraft(session: EditorSession): EditorSession {
+  if (!session.draft) return session
+  return { history: session.history, draft: null }
 }
 
 export function undoSession(session: EditorSession): EditorSession {

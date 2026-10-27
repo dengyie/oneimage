@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { createEditorState, type EditorState } from '../src/domain/editor-state'
 import {
   EMPTY_SESSION,
+  addAnnotationLayer,
   canRedoSession,
   canUndoSession,
   commitDraft,
-  commitState,
   commitVisibleState,
+  discardDraft,
   liveEdit,
   openDocument,
   redoSession,
@@ -33,80 +34,116 @@ describe('editor session history', () => {
     expect(canRedoSession(session)).toBe(false)
   })
 
-  it('records the state a committed gesture started from, so undo changes the image', () => {
-    // A crop drag writes live states first, then commits its final result.
+  it('commits a live gesture as one step whose undo returns to the state before it', () => {
     const { session, initial } = started()
     const cropped: EditorState = { ...initial, crop: { x: 10, y: 10, width: 50, height: 50 } }
-    const live = liveEdit(session, cropped)
-    expect(sessionState(live)).toBe(cropped)
 
-    const committed = commitState(live, cropped)
+    const dragging = liveEdit(session, cropped)
+    expect(sessionState(dragging)).toBe(cropped)
+    expect(canUndoSession(dragging)).toBe(false)
+
+    const committed = commitDraft(dragging)
     expect(sessionState(committed)).toEqual(cropped)
-    expect(canUndoSession(committed)).toBe(true)
+    expect(committed.history?.past).toHaveLength(1)
 
     const undone = undoSession(committed)
     expect(sessionState(undone)).toEqual(initial)
-    expect(canRedoSession(undone)).toBe(true)
-
-    const redone = redoSession(undone)
-    expect(sessionState(redone)).toEqual(cropped)
+    expect(sessionState(redoSession(undone))).toEqual(cropped)
   })
 
-  it('commits a live draft without duplicating it into the past', () => {
+  it('treats a gesture that ends where it started as no edit at all', () => {
     const { session, initial } = started()
-    const brightened: EditorState = {
-      ...initial,
-      adjustments: { ...initial.adjustments, brightness: 20 },
-    }
-    const afterSweep = commitDraft(liveEdit(session, brightened))
-    expect(sessionState(afterSweep)).toEqual(brightened)
-    expect(afterSweep.history?.past).toHaveLength(1)
+    // A slider sweep out and back is not an edit, so it must not create a step.
+    const away = liveEdit(session, { ...initial, adjustments: { ...initial.adjustments, brightness: 15 } })
+    const back = liveEdit(away, initial)
+    const settled = commitDraft(back)
 
-    const undone = undoSession(afterSweep)
-    expect(sessionState(undone)).toEqual(initial)
+    expect(settled.history?.past).toHaveLength(0)
+    expect(canUndoSession(settled)).toBe(false)
+    expect(commitDraft(settled)).toBe(settled)
   })
 
-  it('ignores a commit that matches the committed state', () => {
-    const { session, initial } = started()
-    const committed = commitDraft(liveEdit(session, { ...initial, rotation: 90 }))
-    const noop = commitDraft(liveEdit(committed, { ...committed.history!.present.state }))
-    expect(noop.history?.past).toHaveLength(1)
-    expect(commitState(committed, { ...committed.history!.present.state }).history).toBe(committed.history)
-  })
-
-  it('never lets a stale commit discard a live draft', () => {
-    const { session, initial } = started()
-    const draft: EditorState = { ...initial, crop: { x: 5, y: 5, width: 40, height: 40 } }
-    const dragging = liveEdit(session, draft)
-
-    // A caller that passes the pre-drag state (a render-time snapshot that has
-    // not caught up yet) must not wipe the drag the user is making.
-    expect(commitState(dragging, initial)).toBe(dragging)
-    expect(sessionState(commitState(dragging, initial))).toEqual(draft)
-
-    // Committing the draft itself still records exactly one step.
-    const committed = commitDraft(dragging)
-    expect(committed.history?.past).toHaveLength(1)
-    expect(sessionState(undoSession(committed))).toEqual(initial)
-  })
-
-  it('commits a crop drag that only exists as a draft', () => {
-    const { session, initial } = started()
-    const cropped: EditorState = { ...initial, crop: { x: 0, y: 0, width: 80, height: 80 } }
-    const committed = commitDraft(liveEdit(session, cropped))
-    expect(sessionState(committed)).toEqual(cropped)
-    expect(sessionState(undoSession(committed))).toEqual(initial)
-    expect(commitDraft(committed)).toBe(committed)
-  })
-
-  it('drops the redo branch when a new edit happens after undo', () => {
+  it('keeps the redo branch when a sweep returns to its starting value', () => {
     const { session, initial } = started()
     const rotated = commitVisibleState(session, { ...initial, rotation: 90 })
     const undone = undoSession(rotated)
     expect(canRedoSession(undone)).toBe(true)
 
-    const diverged = liveEdit(undone, { ...initial, flipX: true })
+    const away = liveEdit(undone, { ...initial, adjustments: { ...initial.adjustments, brightness: 15 } })
+    const back = liveEdit(away, initial)
+    const settled = commitDraft(back)
+
+    // Nothing was committed, so the abandoned step is still reachable.
+    expect(canRedoSession(settled)).toBe(true)
+    expect(sessionState(redoSession(settled))).toEqual({ ...initial, rotation: 90 })
+  })
+
+  it('drops the redo branch when a discrete edit is recorded', () => {
+    const { session, initial } = started()
+    const rotated = commitVisibleState(session, { ...initial, rotation: 90 })
+    const undone = undoSession(rotated)
+    expect(canRedoSession(undone)).toBe(true)
+
+    const diverged = commitVisibleState(undone, { ...initial, flipX: true })
     expect(canRedoSession(diverged)).toBe(false)
+  })
+
+  it('parks an uncommitted draft in the redo branch when undo runs', () => {
+    const { session, initial } = started()
+    const rotated = commitVisibleState(session, { ...initial, rotation: 90 })
+    const draft: EditorState = { ...rotated.history!.present.state, flipY: true }
+
+    const undone = undoSession(liveEdit(rotated, draft))
+    expect(sessionState(undone)).toEqual(initial)
+    // Redo brings back exactly what was on screen, draft included.
+    expect(sessionState(redoSession(undone))).toEqual(draft)
+  })
+
+  it('adds an annotation on top of a live draft as one step', () => {
+    const { session, initial } = started()
+    const draft: EditorState = {
+      ...initial,
+      adjustments: { ...initial.adjustments, contrast: 30 },
+    }
+    const layer = { id: 'annot', type: 'rect' as const, rect: { x: 1, y: 2, width: 10, height: 10 }, color: '#fff', strokeWidth: 2 }
+
+    const annotated = addAnnotationLayer(liveEdit(session, draft), layer)
+    expect(annotated.history?.past).toHaveLength(1)
+    expect(sessionState(annotated)).toEqual({ ...draft, annotations: [layer] })
+    // The state the user was looking at is what undo restores.
+    expect(sessionState(undoSession(annotated))).toEqual(draft)
+  })
+
+  it('adds annotations one at a time', () => {
+    const { session, initial } = started()
+    const first = { id: 'a', type: 'rect' as const, rect: { x: 0, y: 0, width: 5, height: 5 }, color: '#fff', strokeWidth: 1 }
+    const second = { id: 'b', type: 'rect' as const, rect: { x: 6, y: 6, width: 5, height: 5 }, color: '#fff', strokeWidth: 1 }
+
+    const one = addAnnotationLayer(session, first)
+    const two = addAnnotationLayer(one, second)
+    expect(sessionState(two)?.annotations).toEqual([first, second])
+    expect(sessionState(undoSession(two))?.annotations).toEqual([first])
+    expect(sessionState(undoSession(undoSession(two)))?.annotations ?? []).toEqual(initial.annotations)
+  })
+
+  it('ignores annotations and edits with no document open', () => {
+    const layer = { id: 'a', type: 'rect' as const, rect: { x: 0, y: 0, width: 5, height: 5 }, color: '#fff', strokeWidth: 1 }
+    expect(addAnnotationLayer(EMPTY_SESSION, layer)).toBe(EMPTY_SESSION)
+    expect(commitVisibleState(EMPTY_SESSION, createEditorState(10, 10))).toBe(EMPTY_SESSION)
+    expect(liveEdit(EMPTY_SESSION, createEditorState(10, 10))).toBe(EMPTY_SESSION)
+    expect(discardDraft(EMPTY_SESSION)).toBe(EMPTY_SESSION)
+  })
+
+  it('discards an interrupted gesture without recording a step', () => {
+    const { session, initial } = started()
+    const dragging = liveEdit(session, { ...initial, crop: { x: 5, y: 5, width: 40, height: 40 } })
+
+    const cancelled = discardDraft(dragging)
+    expect(sessionState(cancelled)).toEqual(initial)
+    expect(cancelled.draft).toBeNull()
+    expect(cancelled.history).toBe(dragging.history)
+    // Nothing to discard: the session is returned untouched.
+    expect(discardDraft(cancelled)).toBe(cancelled)
   })
 
   it('undoes a reset back to the edited state', () => {
@@ -119,14 +156,6 @@ describe('editor session history', () => {
     expect(sessionState(undone)).toEqual({ ...initial, rotation: 90, flipY: true })
     // the reset itself stays redoable
     expect(sessionState(redoSession(undone))).toEqual(createEditorState(100, 100))
-  })
-
-  it('keeps an uncommitted draft restorable through undo of a reset', () => {
-    const { session, initial } = started()
-    const draft: EditorState = { ...initial, adjustments: { ...initial.adjustments, contrast: 30 } }
-    const withDraft = liveEdit(session, draft)
-    const reset = commitVisibleState(withDraft, createEditorState(100, 100))
-    expect(sessionState(undoSession(reset))).toEqual(draft)
   })
 
   it('restoring another draft joins the tree, and undo returns to the previous document', () => {
@@ -166,6 +195,6 @@ describe('editor session history', () => {
     const { session } = started()
     expect(undoSession(session)).toBe(session)
     expect(redoSession(session)).toBe(session)
-    expect(commitState(EMPTY_SESSION, createEditorState(10, 10))).toBe(EMPTY_SESSION)
+    expect(commitDraft(session)).toBe(session)
   })
 })

@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import type { EditorState, Rect, AnnotationLayer } from '../../domain/editor-state'
 import { createEditorState, clampCrop, rotatedDimensions, isStrokePointRedundant } from '../../domain/editor-state'
-import { renderEditor, schedulePreview, type DecodedSource } from '../../application/editor-renderer'
+import { renderEditor, schedulePreview, planRenderDimensions, PREVIEW_MAX_EDGE, type DecodedSource } from '../../application/editor-renderer'
 import { createBrowserCanvasFactory } from '../../infrastructure/editor-canvas'
 import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, computeCursorAnchoredPan, type CropHandle, type CropGesture } from '../image-editor-model'
 import type { ActiveTool } from './BottomDock'
@@ -26,9 +26,17 @@ interface CanvasViewportProps {
   panOffset: { x: number; y: number }
   onZoomChange: (scale: number) => void
   onPanChange: (offset: { x: number; y: number }) => void
-  onStateChange: (state: EditorState) => void
-  onCommitHistory: (state: EditorState) => void
+  /** Live crop drag output; null-safe clamp/commit belongs to the session. */
+  onCropChange: (crop: Rect) => void
+  /** Ends a crop drag so it becomes one undoable step. */
   onCommitDraft: () => void
+  /** Drops an interrupted gesture, restoring the committed crop. */
+  onCancelDraft: () => void
+  /**
+   * Adds a finished stroke or text layer. Only the layer is handed over: the
+   * state it is drawn onto comes from the session, never from this render.
+   */
+  onAddAnnotation: (layer: AnnotationLayer) => void
 }
 
 export const CanvasViewport: React.FC<CanvasViewportProps> = ({
@@ -48,9 +56,10 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   panOffset,
   onZoomChange,
   onPanChange,
-  onStateChange,
-  onCommitHistory,
+  onCropChange,
   onCommitDraft,
+  onCancelDraft,
+  onAddAnnotation,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -92,7 +101,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   useEffect(() => {
     if (!source || !canvasRef.current) return
     const canvas = canvasRef.current
-
     // If comparing original, render pristine source
     const effectiveState = isComparingOriginal
       ? createEditorState(source.width, source.height)
@@ -101,7 +109,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     const cancel = schedulePreview(async () => {
       try {
         const rendered = renderEditor(source, effectiveState, factory, {
-          maxEdge: 2400,
+          maxEdge: PREVIEW_MAX_EDGE,
           showFullSource: activeTool === 'crop',
         })
         canvas.width = rendered.width
@@ -225,6 +233,13 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         panY: panOffset.y,
       }
       containerRef.current.style.cursor = 'grabbing'
+      // Capture so a fast drag that leaves the viewport keeps panning and still
+      // delivers its pointerup.
+      try {
+        containerRef.current.setPointerCapture(e.pointerId)
+      } catch {
+        // ignore
+      }
       return
     }
 
@@ -275,6 +290,16 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!source || !canvasRef.current) return
 
+    // No button is held: the pointerup happened outside the captured element
+    // (or capture was lost). Ending the gesture here keeps a drag from sticking
+    // to the cursor for the rest of the session.
+    if (e.buttons === 0) {
+      if (isPanningRef.current || cropGestureRef.current || currentStrokeRef.current) {
+        handlePointerUp(e)
+      }
+      return
+    }
+
     if (isPanningRef.current) {
       const dx = e.clientX - panStartRef.current.x
       const dy = e.clientY - panStartRef.current.y
@@ -288,8 +313,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
     // Crop dragging
     if (cropGestureRef.current) {
       const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
-      const nextCrop = updateCropGesture(cropGestureRef.current, sourcePt)
-      onStateChange({ ...state, crop: nextCrop })
+      onCropChange(updateCropGesture(cropGestureRef.current, sourcePt))
       return
     }
 
@@ -417,19 +441,46 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       }
 
       if (newLayer) {
-        const nextState: EditorState = {
-          ...state,
-          annotations: [...(state.annotations || []), newLayer],
-        }
-        onCommitHistory(nextState)
+        // Hand over the layer alone: the state it lands on comes from the
+        // session, so a queued update can never be overwritten with a stale copy.
+        onAddAnnotation(newLayer)
       }
     }
+  }
+
+  // The browser cancelled the gesture (system gesture, focus loss, capture
+  // stolen). Abandon it: no layer is added and no crop step is recorded.
+  const handlePointerCancel = () => {
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      if (containerRef.current) {
+        containerRef.current.style.cursor = isSpaceDownRef.current ? 'grab' : ''
+      }
+    }
+    if (cropGestureRef.current) {
+      cropGestureRef.current = null
+      onCancelDraft()
+      return
+    }
+    if (currentStrokeRef.current) {
+      currentStrokeRef.current = null
+      setCurrentStroke(null)
+    }
+    setActiveTextInput(null)
   }
 
   // Start Crop Handle Gesture
   const handleCropHandleDown = (handle: CropHandle, e: React.PointerEvent) => {
     e.stopPropagation()
     if (!source || !canvasRef.current) return
+    // Crop handles sit above the canvas and stop propagation, so the container's
+    // pointerdown capture never runs. Capture here or a drag that leaves the
+    // handle is never completed and the crop overlay stays stuck to the cursor.
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // ignore
+    }
     const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
     cropGestureRef.current = createCropGesture(
       handle,
@@ -468,19 +519,24 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         textBgStyle: textStyle,
         strokeWidth: 1,
       }
-      const nextState: EditorState = {
-        ...state,
-        annotations: [...(state.annotations || []), newLayer],
-      }
-      onCommitHistory(nextState)
+      onAddAnnotation(newLayer)
     }
     setActiveTextInput(null)
   }
 
   // Viewport crop rect calculation (for handle overlays)
   const rotatedDim = source ? rotatedDimensions(source.width, source.height, state.rotation) : null
-  const canvasWidth = canvasRef.current?.width || 0
-  const canvasHeight = canvasRef.current?.height || 0
+  // Plan the bitmap size instead of measuring the canvas element: the render
+  // effect resizes it after paint, so a DOM read here reports the previous
+  // document's size (or the 300x150 default) and the crop rectangle is drawn
+  // against the wrong scale until an unrelated re-render happens to fix it.
+  const renderPlan = useMemo(() => {
+    if (!source) return { width: 0, height: 0 }
+    const effectiveState = isComparingOriginal ? createEditorState(source.width, source.height) : state
+    return planRenderDimensions(effectiveState, PREVIEW_MAX_EDGE, activeTool === 'crop')
+  }, [source, state, activeTool, isComparingOriginal])
+  const canvasWidth = renderPlan.width
+  const canvasHeight = renderPlan.height
   const cropScale = (source && activeTool === 'crop' && rotatedDim && canvasWidth > 0)
     ? canvasWidth / rotatedDim.width
     : 1
@@ -511,6 +567,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
       onDoubleClick={handleDoubleClick}
       className={`relative w-full h-full overflow-hidden select-none touch-none flex items-center justify-center ${
         activeTool === 'none' || isSpaceDownRef.current ? 'cursor-grab' : 'cursor-crosshair'

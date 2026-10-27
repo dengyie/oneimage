@@ -38,6 +38,21 @@ export function resolveRenderDimensions(sourceWidth: number, sourceHeight: numbe
   return { width: Math.max(1, Math.round(sourceWidth * scale)), height: Math.max(1, Math.round(sourceHeight * scale)) }
 }
 
+/** Edge length the on-screen preview is rendered at. */
+export const PREVIEW_MAX_EDGE = 2400
+
+/**
+ * The size `renderEditor` will produce for these inputs. Pure and synchronous so
+ * the viewport can lay out overlays against the same numbers the renderer uses,
+ * instead of measuring the canvas element after the fact.
+ */
+export function planRenderDimensions(state: EditorState, maxEdge: number, showFullSource: boolean): { width: number; height: number } {
+  const baseWidth = showFullSource ? state.sourceWidth : state.crop.width
+  const baseHeight = showFullSource ? state.sourceHeight : state.crop.height
+  const rotated = rotatedDimensions(baseWidth, baseHeight, state.rotation)
+  return resolveRenderDimensions(rotated.width, rotated.height, maxEdge)
+}
+
 export function schedulePreview(task: () => Promise<void>, scheduler: PreviewScheduler = browserScheduler): () => void {
   let cancelled = false
   const frame = scheduler.request(async () => {
@@ -51,16 +66,12 @@ export function renderEditor(source: DecodedSource, state: EditorState, factory:
   const maxEdge = options.maxEdge ?? 1600
   signal = options.signal
   throwIfAborted(signal)
-  const baseWidth = options.showFullSource ? state.sourceWidth : state.crop.width
-  const baseHeight = options.showFullSource ? state.sourceHeight : state.crop.height
-  const rotated = rotatedDimensions(baseWidth, baseHeight, state.rotation)
-  const rotatedWidth = rotated.width
-  const rotatedHeight = rotated.height
-  const dimensions = resolveRenderDimensions(rotatedWidth, rotatedHeight, maxEdge)
+  const showFullSource = options.showFullSource ?? false
+  const dimensions = planRenderDimensions(state, maxEdge, showFullSource)
   const canvas = factory.create(dimensions.width, dimensions.height)
   const context = canvas.getContext('2d')
   if (!context) throw new Error('editor canvas unavailable')
-  drawEditor(context, source, state, factory, dimensions.width, dimensions.height, signal, options.showFullSource ?? false)
+  drawEditor(context, source, state, factory, dimensions.width, dimensions.height, signal, showFullSource)
   return { canvas, ...dimensions }
 }
 

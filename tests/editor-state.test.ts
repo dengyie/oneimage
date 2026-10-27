@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { clampCrop, createEditorState, editorStatesEqual, isStrokePointRedundant, rotatedDimensions, rotateEditorState, type AnnotationLayer } from '../src/domain/editor-state'
+import {
+  ASPECT_RATIO_PRESETS,
+  aspectRatioId,
+  clampCrop,
+  createEditorState,
+  editorStatesEqual,
+  isStrokePointRedundant,
+  normalizeAspectRatio,
+  rotatedDimensions,
+  rotateEditorState,
+  type AnnotationLayer,
+} from '../src/domain/editor-state'
 
 describe('editor state', () => {
   it('creates a full-image crop with neutral adjustments', () => {
@@ -57,5 +68,26 @@ describe('editor state', () => {
     // strictly larger threshold drops it.
     expect(isStrokePointRedundant({ x: 0, y: 0 }, { x: 4, y: 3 }, 5)).toBe(false)
     expect(isStrokePointRedundant({ x: 0, y: 0 }, { x: 4, y: 3 }, 5.0001)).toBe(true)
+  })
+})
+
+describe('crop ratio pills', () => {
+  it('maps a stored ratio back to the pill that produced it', () => {
+    expect(aspectRatioId(null)).toBe('free')
+    expect(aspectRatioId(1)).toBe('1:1')
+    expect(aspectRatioId(4 / 3)).toBe('4:3')
+    expect(aspectRatioId(16 / 9)).toBe('16:9')
+    expect(aspectRatioId(9 / 16)).toBe('9:16')
+  })
+
+  it('falls back to free for a ratio no pill represents', () => {
+    expect(aspectRatioId(2.35)).toBe('free')
+    expect(aspectRatioId(0)).toBe('free')
+  })
+
+  it('round-trips every pill id through the value parser', () => {
+    for (const preset of ASPECT_RATIO_PRESETS) {
+      expect(aspectRatioId(normalizeAspectRatio(preset.id))).toBe(preset.id)
+    }
   })
 })
