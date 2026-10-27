@@ -38,6 +38,7 @@ import { CanvasViewport } from './components/editor/CanvasViewport'
 import { TopActionBar } from './components/editor/TopActionBar'
 import { BottomDock, type ActiveTool } from './components/editor/BottomDock'
 import { EmptyDropzone } from './components/editor/EmptyDropzone'
+import { PointerRipples } from './components/ui/PointerRipples'
 import { UserNavCapsule } from './components/navigation/UserNavCapsule'
 import { AuthModal } from './components/auth/AuthModal'
 import { ProfileModal } from './components/auth/ProfileModal'
@@ -1017,6 +1018,15 @@ export function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-zinc-950 select-none">
+      {/* WebGL Multi-Color Interactive Fluid Ripples Backdrop */}
+      <PointerRipples
+        className="fixed inset-0 pointer-events-none w-full h-full z-0"
+        opacity={0.85}
+        curl={18}
+        splatRadius={0.36}
+        idleMs={5000}
+      />
+
       <input
         ref={fileInputRef}
         type="file"
