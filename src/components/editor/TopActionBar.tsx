@@ -8,6 +8,8 @@ interface TopActionBarProps {
   zoomPercent: number
   canUndo: boolean
   canRedo: boolean
+  /** Reset is meaningful for any uncommitted work, not just committed steps. */
+  canReset: boolean
   isComparingOriginal: boolean
   isProcessing?: boolean
   onUndo: () => void
@@ -31,6 +33,7 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
   zoomPercent,
   canUndo,
   canRedo,
+  canReset,
   isComparingOriginal,
   isProcessing = false,
   onUndo,
@@ -102,7 +105,7 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
         </button>
         <button
           onClick={onRevert}
-          disabled={!canUndo}
+          disabled={!canReset}
           title="重置全部更改"
           className="p-1.5 rounded-full hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-400 hover:text-rose-400 transition-colors"
         >

@@ -88,7 +88,11 @@ export function App() {
   // Editor Domain History
   const [session, setSession] = useState<EditorSession>(EMPTY_SESSION)
   const sessionRef = useRef(session)
-  const switchingDocumentRef = useRef(false)
+  // Every document switch decodes asynchronously. The epoch makes the newest
+  // switch win: a slower, older decode can never overwrite the canvas that a
+  // later one already installed.
+  const canvasEpochRef = useRef(0)
+  const switchInFlightRef = useRef(false)
   const currentDraftIdRef = useRef<string | null>(null)
 
   // Keep the ref pointing at the latest committed render; async document
@@ -305,12 +309,19 @@ export function App() {
       }
 
       setErrorMessage(null)
+      const epoch = ++canvasEpochRef.current
+      switchInFlightRef.current = true
       setIsProcessing(true)
 
       try {
         // Persist the outgoing draft while its bitmap is still open.
         flushPendingPersist()
         const decoded = await decodeEditorSource(nextFile)
+        if (epoch !== canvasEpochRef.current) {
+          // A newer switch already took over the canvas.
+          decoded.close()
+          return
+        }
         setFile(nextFile)
         setDecodedSource(decoded)
 
@@ -338,11 +349,15 @@ export function App() {
 
         showToast(`已载入 ${nextFile.name}，完全在本地处理`, 'success')
       } catch (err) {
+        if (epoch !== canvasEpochRef.current) return
         console.error('Failed to decode image:', err)
         setErrorMessage('图片解析失败，可能格式损坏或不支持')
         showToast('图片解析失败', 'error')
       } finally {
-        setIsProcessing(false)
+        if (epoch === canvasEpochRef.current) {
+          switchInFlightRef.current = false
+          setIsProcessing(false)
+        }
       }
     },
     [flushPendingPersist, showToast]
@@ -372,20 +387,31 @@ export function App() {
   // parameters against another document's pixels.
   const applySession = useCallback(
     async (next: EditorSession) => {
+      // Any newer switch supersedes an in-flight one, including a same-document
+      // move that decodes nothing.
+      const epoch = ++canvasEpochRef.current
       const target = next.history?.present
       const active = sessionSnapshot(sessionRef.current)
       if (!target || (active && active.docId === target.docId)) {
+        if (switchInFlightRef.current) {
+          switchInFlightRef.current = false
+          setIsProcessing(false)
+        }
         sessionRef.current = next
         setSession(next)
         return
       }
-      if (switchingDocumentRef.current) return
-      switchingDocumentRef.current = true
+      switchInFlightRef.current = true
       setIsProcessing(true)
       try {
         // Persist the outgoing draft while its bitmap is still open.
         flushPendingPersist()
         const decoded = await decodeEditorSource(target.file)
+        if (epoch !== canvasEpochRef.current) {
+          // A newer switch already took over the canvas.
+          decoded.close()
+          return
+        }
         setFile(target.file)
         setDecodedSource(decoded)
         currentDraftIdRef.current = target.docId
@@ -405,11 +431,14 @@ export function App() {
         sessionRef.current = next
         setSession(next)
       } catch (err) {
+        if (epoch !== canvasEpochRef.current) return
         console.error('Failed to switch document:', err)
         showToast('切换画布失败，请重试', 'error')
       } finally {
-        switchingDocumentRef.current = false
-        setIsProcessing(false)
+        if (epoch === canvasEpochRef.current) {
+          switchInFlightRef.current = false
+          setIsProcessing(false)
+        }
       }
     },
     [flushPendingPersist, showToast]
@@ -744,12 +773,19 @@ export function App() {
     async (item: UnifiedHistoryItem) => {
       if (item.localItem) {
         const local = item.localItem
+        const epoch = ++canvasEpochRef.current
+        switchInFlightRef.current = true
         setIsProcessing(true)
         try {
           // Persist the outgoing draft while its bitmap is still open.
           flushPendingPersist()
           const restoredFile = new File([local.originalBlob], local.fileName, { type: local.mimeType })
           const decoded = await decodeEditorSource(restoredFile)
+          if (epoch !== canvasEpochRef.current) {
+            // A newer switch already took over the canvas.
+            decoded.close()
+            return
+          }
           setFile(restoredFile)
           setDecodedSource(decoded)
           currentDraftIdRef.current = local.id
@@ -771,10 +807,14 @@ export function App() {
           setShowHistoryDrawer(false)
           showToast(`已恢复草稿：${local.title}`, 'success')
         } catch (err) {
+          if (epoch !== canvasEpochRef.current) return
           console.error('Failed to restore history draft:', err)
           showToast('恢复草稿失败，原图可能损坏', 'error')
         } finally {
-          setIsProcessing(false)
+          if (epoch === canvasEpochRef.current) {
+            switchInFlightRef.current = false
+            setIsProcessing(false)
+          }
         }
         return
       }
@@ -1052,6 +1092,7 @@ export function App() {
             zoomPercent={Math.round(zoomScale * 100)}
             canUndo={canUndoSession(session)}
             canRedo={canRedoSession(session)}
+            canReset={canUndoSession(session) || Boolean(session.draft)}
             isComparingOriginal={isComparingOriginal}
             isProcessing={isProcessing}
             onUndo={handleUndo}
@@ -1101,6 +1142,7 @@ export function App() {
               onPanChange={setPanOffset}
               onStateChange={handleStateChange}
               onCommitHistory={handleCommitHistory}
+              onCommitDraft={handleCommitDraft}
             />
           </main>
 

@@ -64,8 +64,6 @@ export interface HistoryTree<T> {
   future: readonly T[]
 }
 
-export type EditorHistory = HistoryTree<EditorState>
-
 export const DEFAULT_ADJUSTMENTS: Adjustments = Object.freeze({
   brightness: 0,
   contrast: 0,
@@ -168,9 +166,10 @@ export function editorStatesEqual(a: EditorState, b: EditorState): boolean {
   for (let i = 0; i < a.localAdjustments.length; i++) {
     const left = a.localAdjustments[i]
     const right = b.localAdjustments[i]
-    if (left !== right && (!rectsEqual(left.rect, right.rect) || !adjustmentsEqual(left.adjustments, right.adjustments))) {
-      return false
-    }
+    if (left === right) continue
+    if (!rectsEqual(left.rect, right.rect)) return false
+    if (!adjustmentsEqual(left.adjustments, right.adjustments)) return false
+    if (left.mosaicBlockSize !== right.mosaicBlockSize) return false
   }
   const annotationsA = a.annotations ?? []
   const annotationsB = b.annotations ?? []
@@ -180,22 +179,6 @@ export function editorStatesEqual(a: EditorState, b: EditorState): boolean {
     if (annotationsA[i] !== annotationsB[i]) return false
   }
   return true
-}
-
-export function pushHistory<T>(history: HistoryTree<T>, next: T): HistoryTree<T> {
-  return { past: [...history.past, history.present], present: next, future: [] }
-}
-
-export function undoHistory<T>(history: HistoryTree<T>): HistoryTree<T> {
-  const previous = history.past.at(-1)
-  if (!previous) return history
-  return { past: history.past.slice(0, -1), present: previous, future: [history.present, ...history.future] }
-}
-
-export function redoHistory<T>(history: HistoryTree<T>): HistoryTree<T> {
-  const next = history.future[0]
-  if (!next) return history
-  return { past: [...history.past, history.present], present: next, future: history.future.slice(1) }
 }
 
 // Pointer events fire far faster than a stroke's rendered width can express;

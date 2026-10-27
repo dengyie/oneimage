@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampCrop, createEditorState, isStrokePointRedundant, redoHistory, rotatedDimensions, rotateEditorState, undoHistory, type EditorHistory } from '../src/domain/editor-state'
+import { clampCrop, createEditorState, editorStatesEqual, isStrokePointRedundant, rotatedDimensions, rotateEditorState, type AnnotationLayer } from '../src/domain/editor-state'
 
 describe('editor state', () => {
   it('creates a full-image crop with neutral adjustments', () => {
@@ -21,12 +21,23 @@ describe('editor state', () => {
     expect(rotated.crop).toEqual(state.crop)
   })
 
-  it('undoes and redoes immutable state snapshots', () => {
-    const first = createEditorState(100, 100)
-    const second = { ...first, rotation: 90 }
-    const history: EditorHistory = { past: [first], present: second, future: [] }
-    expect(undoHistory(history).present).toBe(first)
-    expect(redoHistory(undoHistory(history)).present).toBe(second)
+  it('compares snapshots structurally so no-op commits can be skipped', () => {
+    const base = createEditorState(100, 100)
+    expect(editorStatesEqual(base, { ...base })).toBe(true)
+    expect(editorStatesEqual(base, { ...base, rotation: 90 })).toBe(false)
+    expect(editorStatesEqual(base, { ...base, crop: { ...base.crop, width: 50 } })).toBe(false)
+    expect(editorStatesEqual(base, { ...base, adjustments: { ...base.adjustments, blur: 2 } })).toBe(false)
+
+    const mosaic = { id: 'l1', rect: { x: 0, y: 0, width: 10, height: 10 }, adjustments: { ...base.adjustments }, mosaicBlockSize: 16 }
+    const withLocal = { ...base, localAdjustments: [mosaic] }
+    expect(editorStatesEqual(withLocal, { ...base, localAdjustments: [{ ...mosaic }] })).toBe(true)
+    expect(editorStatesEqual(withLocal, { ...base, localAdjustments: [{ ...mosaic, mosaicBlockSize: 24 }] })).toBe(false)
+
+    // Annotation layers are immutable: a changed layer is a new object.
+    const layer: AnnotationLayer = { id: 'a1', type: 'rect', color: '#fff', strokeWidth: 2, rect: { x: 0, y: 0, width: 5, height: 5 } }
+    const withLayer = { ...base, annotations: [layer] }
+    expect(editorStatesEqual(withLayer, { ...base, annotations: [layer] })).toBe(true)
+    expect(editorStatesEqual(withLayer, { ...base, annotations: [{ ...layer }] })).toBe(false)
   })
 
   it('uses a bounding box for arbitrary rotation angles', () => {

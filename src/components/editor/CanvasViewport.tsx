@@ -28,6 +28,7 @@ interface CanvasViewportProps {
   onPanChange: (offset: { x: number; y: number }) => void
   onStateChange: (state: EditorState) => void
   onCommitHistory: (state: EditorState) => void
+  onCommitDraft: () => void
 }
 
 export const CanvasViewport: React.FC<CanvasViewportProps> = ({
@@ -49,6 +50,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   onPanChange,
   onStateChange,
   onCommitHistory,
+  onCommitDraft,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -354,7 +356,10 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
 
     if (cropGestureRef.current) {
       cropGestureRef.current = null
-      onCommitHistory(state)
+      // Commit the session's own draft: the crop the user dragged to is queued
+      // as a live edit, and reading a render-time `state` here can lag behind
+      // the last pointer move (or predate the drag entirely).
+      onCommitDraft()
       return
     }
 
@@ -416,7 +421,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           ...state,
           annotations: [...(state.annotations || []), newLayer],
         }
-        onStateChange(nextState)
         onCommitHistory(nextState)
       }
     }
@@ -468,7 +472,6 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
         ...state,
         annotations: [...(state.annotations || []), newLayer],
       }
-      onStateChange(nextState)
       onCommitHistory(nextState)
     }
     setActiveTextInput(null)

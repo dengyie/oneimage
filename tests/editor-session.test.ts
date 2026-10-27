@@ -74,6 +74,31 @@ describe('editor session history', () => {
     expect(commitState(committed, { ...committed.history!.present.state }).history).toBe(committed.history)
   })
 
+  it('never lets a stale commit discard a live draft', () => {
+    const { session, initial } = started()
+    const draft: EditorState = { ...initial, crop: { x: 5, y: 5, width: 40, height: 40 } }
+    const dragging = liveEdit(session, draft)
+
+    // A caller that passes the pre-drag state (a render-time snapshot that has
+    // not caught up yet) must not wipe the drag the user is making.
+    expect(commitState(dragging, initial)).toBe(dragging)
+    expect(sessionState(commitState(dragging, initial))).toEqual(draft)
+
+    // Committing the draft itself still records exactly one step.
+    const committed = commitDraft(dragging)
+    expect(committed.history?.past).toHaveLength(1)
+    expect(sessionState(undoSession(committed))).toEqual(initial)
+  })
+
+  it('commits a crop drag that only exists as a draft', () => {
+    const { session, initial } = started()
+    const cropped: EditorState = { ...initial, crop: { x: 0, y: 0, width: 80, height: 80 } }
+    const committed = commitDraft(liveEdit(session, cropped))
+    expect(sessionState(committed)).toEqual(cropped)
+    expect(sessionState(undoSession(committed))).toEqual(initial)
+    expect(commitDraft(committed)).toBe(committed)
+  })
+
   it('drops the redo branch when a new edit happens after undo', () => {
     const { session, initial } = started()
     const rotated = commitVisibleState(session, { ...initial, rotation: 90 })

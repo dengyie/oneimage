@@ -63,7 +63,12 @@ export function liveEdit(session: EditorSession, next: EditorState): EditorSessi
 export function commitState(session: EditorSession, next: EditorState): EditorSession {
   const present = session.history?.present
   if (!present) return session
-  if (editorStatesEqual(present.state, next)) return { history: session.history, draft: null }
+  if (editorStatesEqual(present.state, next)) {
+    // A commit that carries nothing new. A live draft that differs from it is
+    // still uncommitted work — a stale caller must not destroy it.
+    if (session.draft && !editorStatesEqual(session.draft, next)) return session
+    return { history: session.history, draft: null }
+  }
   return {
     history: { past: [...(session.history?.past ?? []), present], present: { ...present, state: next }, future: [] },
     draft: null,
