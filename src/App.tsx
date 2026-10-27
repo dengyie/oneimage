@@ -1021,10 +1021,14 @@ export function App() {
       {/* WebGL Multi-Color Interactive Fluid Ripples Backdrop */}
       <PointerRipples
         className="fixed inset-0 pointer-events-none w-full h-full z-0"
-        opacity={0.85}
-        curl={18}
-        splatRadius={0.36}
-        idleMs={5000}
+        opacity={0.3}
+        curl={10}
+        splatRadius={0.15}
+        densityDissipation={4.6}
+        velocityDissipation={2.6}
+        colorIntensity={0.15}
+        colorSaturation={0.6}
+        idleMs={4000}
       />
 
       <input
