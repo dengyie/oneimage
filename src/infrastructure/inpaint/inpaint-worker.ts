@@ -8,10 +8,9 @@
 import { ensureMiganModel } from './model-cache'
 import { ORT_VERSION } from './ort-version'
 import {
-  compositeMasked,
+  compositeFromChw,
   maskToBinary,
   rgbaToRgbChw,
-  rgbChwToRgba,
   type RgbaPlane,
 } from './inpaint-core'
 
@@ -144,18 +143,12 @@ async function run(req: SmartEraseRequest): Promise<ArrayBuffer> {
 
   const results = await inferenceSession.run(feeds)
   const output = results[inferenceSession.outputNames[0]]
-  const generatedRgba = rgbChwToRgba(
-    output.data as Uint8Array,
-    imagePlane.data,
-    req.width,
-    req.height
-  )
-  const blended = compositeMasked(
-    imagePlane,
-    { data: generatedRgba, width: req.width, height: req.height },
-    alphaPlane
-  )
-  return blended.buffer.slice(0) as ArrayBuffer
+  // Single fused pass: convert CHW -> RGBA and blend through the feathered
+  // alpha in one allocation.
+  const blended = compositeFromChw(output.data as Uint8Array, imagePlane, alphaPlane)
+  // compositeFromChw allocates a fresh ArrayBuffer (never SharedArrayBuffer),
+  // so the cast is sound and no defensive copy is needed before transferring.
+  return blended.buffer as ArrayBuffer
 }
 
 self.onmessage = (event: MessageEvent<SmartEraseRequest>) => {

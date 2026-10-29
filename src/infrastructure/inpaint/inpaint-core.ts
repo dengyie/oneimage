@@ -40,32 +40,19 @@ export function maskToBinary(plane: RgbaPlane): Uint8Array {
 }
 
 /**
- * uint8 CHW model output → RGBA rows, with the original alpha copied back.
- */
-export function rgbChwToRgba(chw: Uint8Array, alpha: Uint8ClampedArray, width: number, height: number): Uint8ClampedArray {
-  const size = width * height
-  const out = new Uint8ClampedArray(size * 4)
-  for (let i = 0, p = 0; i < size; i++, p++) {
-    out[i * 4] = clampByte(chw[p])
-    out[i * 4 + 1] = clampByte(chw[size + p])
-    out[i * 4 + 2] = clampByte(chw[size * 2 + p])
-    out[i * 4 + 3] = alpha[i * 4 + 3]
-  }
-  return out
-}
-
-/**
- * Blends the generated pixels into the base using a feathered alpha mask
+ * Fuses model-output conversion and masking into a single pass: blends the
+ * uint8 CHW result into the base frame using a feathered alpha mask
  * (255 = fully generated, 0 = untouched). Pixels where alpha is exactly 0 are
  * copied bit-for-bit from the base — the hard "nothing outside the mask
- * changes" guarantee of the smart eraser.
+ * changes" guarantee of the smart eraser — and the base alpha channel is
+ * always preserved (the model speaks RGB only).
  */
-export function compositeMasked(base: RgbaPlane, generated: RgbaPlane, alpha: RgbaPlane): Uint8ClampedArray {
+export function compositeFromChw(chw: Uint8Array, base: RgbaPlane, alpha: RgbaPlane): Uint8ClampedArray {
   const size = base.width * base.height
   const out = new Uint8ClampedArray(size * 4)
   for (let i = 0; i < size; i++) {
-    const a = alpha.data[i * 4] / 255
     const o = i * 4
+    const a = alpha.data[o] / 255
     if (a === 0) {
       out[o] = base.data[o]
       out[o + 1] = base.data[o + 1]
@@ -73,17 +60,19 @@ export function compositeMasked(base: RgbaPlane, generated: RgbaPlane, alpha: Rg
       out[o + 3] = base.data[o + 3]
       continue
     }
+    const r = clampByte(chw[i])
+    const g = clampByte(chw[size + i])
+    const b = clampByte(chw[size * 2 + i])
     if (a === 1) {
-      out[o] = generated.data[o]
-      out[o + 1] = generated.data[o + 1]
-      out[o + 2] = generated.data[o + 2]
-      out[o + 3] = generated.data[o + 3]
-      continue
+      out[o] = r
+      out[o + 1] = g
+      out[o + 2] = b
+    } else {
+      out[o] = Math.round(base.data[o] * (1 - a) + r * a)
+      out[o + 1] = Math.round(base.data[o + 1] * (1 - a) + g * a)
+      out[o + 2] = Math.round(base.data[o + 2] * (1 - a) + b * a)
     }
-    out[o] = Math.round(base.data[o] * (1 - a) + generated.data[o] * a)
-    out[o + 1] = Math.round(base.data[o + 1] * (1 - a) + generated.data[o + 1] * a)
-    out[o + 2] = Math.round(base.data[o + 2] * (1 - a) + generated.data[o + 2] * a)
-    out[o + 3] = Math.round(base.data[o + 3] * (1 - a) + generated.data[o + 3] * a)
+    out[o + 3] = base.data[o + 3]
   }
   return out
 }

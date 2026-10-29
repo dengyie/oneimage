@@ -60,16 +60,44 @@ export function assertSafeImageUrl(rawUrl: string, provider: ImagegenProviderCon
   return url
 }
 
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase()
+// WHATWG URL keeps brackets on IPv6 hostnames and normalizes mapped v4 to
+// hex (https://[::ffff:127.0.0.1]/ -> "[::ffff:7f00:1]"), so the guard has to
+// strip brackets and understand v6 forms instead of string-matching the
+// dotted shape.
+export function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().startsWith('[')
+    ? hostname.toLowerCase().slice(1, hostname.toLowerCase().length - 1)
+    : hostname.toLowerCase()
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal')) return true
-  if (host === '0.0.0.0' || host === '::' || host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true
+  if (host.includes(':')) return isPrivateV6(host)
+  if (host === '0.0.0.0') return true
   const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])]
-    if (a === 127 || a === 10 || a === 0 || a === 169 || a === 192) return true
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a >= 224) return true
+  if (v4) return isPrivateV4Octets(Number(v4[1]), Number(v4[2]))
+  return false
+}
+
+function isPrivateV4Octets(a: number, b: number): boolean {
+  if (a === 127 || a === 10 || a === 0 || a === 169 || a === 192) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return a >= 224
+}
+
+function isPrivateV6(host: string): boolean {
+  if (host === '::' || host === '::1') return true
+  if (host.startsWith('fe80:')) return true
+  if (host.startsWith('fc') || host.startsWith('fd')) return true
+  // IPv4-mapped: ::ffff:a.b.c.d or the URL-normalized hex ::ffff:7f00:1.
+  if (host.startsWith('::ffff:')) {
+    const tail = host.slice(7)
+    if (tail.includes('.')) return isPrivateHost(tail)
+    const groups = tail.split(':')
+    if (groups.length === 2) {
+      const hi = Number.parseInt(groups[0], 16)
+      const lo = Number.parseInt(groups[1], 16)
+      if (Number.isFinite(hi) && Number.isFinite(lo)) {
+        return isPrivateV4Octets((hi >> 8) & 255, hi & 255)
+      }
+    }
   }
   return false
 }

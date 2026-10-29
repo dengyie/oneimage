@@ -95,3 +95,15 @@ describe('imagegen config loader', () => {
     expect(result.providers[0].generationConfig).toEqual({ responseModalities: ['TEXT', 'IMAGE'] })
   })
 })
+
+describe('imagegen config warnings', () => {
+  it('warns that generationConfig only applies to gemini providers', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({
+        providers: [{ ...VALID_PROVIDER, generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }],
+      }),
+    })
+    expect(result.providers[0].generationConfig).toBeUndefined()
+    expect(result.warnings[0]).toContain('只对 gemini 类型生效')
+  })
+})

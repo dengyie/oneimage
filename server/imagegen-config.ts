@@ -115,7 +115,11 @@ function validateProviders(raw: unknown, source: string, warnings: string[]): Im
 
     let generationConfig: Record<string, unknown> | undefined
     if (p.generationConfig !== undefined) {
-      if (p.generationConfig && typeof p.generationConfig === 'object' && !Array.isArray(p.generationConfig)) {
+      if (p.type !== 'gemini') {
+        // The passthrough only feeds the gemini generateContent body; keeping
+        // it on other types would silently do nothing.
+        warnings.push(`${label} (${p.id}): generationConfig 只对 gemini 类型生效，已忽略`)
+      } else if (p.generationConfig && typeof p.generationConfig === 'object' && !Array.isArray(p.generationConfig)) {
         generationConfig = p.generationConfig as Record<string, unknown>
       } else {
         warnings.push(`${label} (${p.id}): generationConfig must be an object; ignoring`)
