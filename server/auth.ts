@@ -1,7 +1,17 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import { promisify } from 'node:util'
 import type { DatabaseSync } from 'node:sqlite'
 import type { UserRow, SessionRow } from './db'
 import { AVATAR_COLORS, DEFAULT_AVATAR_COLOR, isAvatarColor } from '../src/domain/avatar'
+
+// The promise-based scrypt runs on the libuv threadpool, keeping the event
+// loop responsive while register/login burn their fixed hashing cost; the
+// synchronous variant stalled every request on the process for tens of ms.
+const scrypt = promisify(scryptCallback) as (
+  password: string | Buffer,
+  salt: string | Buffer,
+  keylen: number
+) => Promise<Buffer>
 
 export interface SafeUser {
   id: string
@@ -24,14 +34,13 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
-export function hashPassword(password: string, salt: string): string {
-  return scryptSync(password, salt, 64).toString('hex')
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  return (await scrypt(password, salt, 64)).toString('hex')
 }
 
-export function verifyPassword(password: string, salt: string, expectedHash: string): boolean {
+export async function verifyPassword(password: string, salt: string, expectedHash: string): Promise<boolean> {
   try {
-    const computed = scryptSync(password, salt, 64).toString('hex')
-    const computedBuf = Buffer.from(computed, 'hex')
+    const computedBuf = Buffer.from(await hashPassword(password, salt), 'hex')
     const expectedBuf = Buffer.from(expectedHash, 'hex')
     if (computedBuf.length !== expectedBuf.length) return false
     return timingSafeEqual(computedBuf, expectedBuf)
@@ -52,15 +61,17 @@ export function toSafeUser(row: UserRow): SafeUser {
   }
 }
 
-export function createUser(
+export async function createUser(
   db: DatabaseSync,
   params: { username: string; email: string; password: string; nickname?: string }
-): SafeUser {
+): Promise<SafeUser> {
   const username = params.username.trim().toLowerCase()
   const email = params.email.trim().toLowerCase()
+  // An empty or whitespace-only nickname falls back to the username instead of
+  // persisting an empty display name.
   const nickname = (params.nickname?.trim() || username).slice(0, 32)
   const salt = randomBytes(16).toString('hex')
-  const passwordHash = hashPassword(params.password, salt)
+  const passwordHash = await hashPassword(params.password, salt)
   const id = `usr_${randomBytes(12).toString('hex')}`
   const now = Date.now()
   const avatarColor = getRandomAvatarColor()
@@ -82,11 +93,11 @@ export function createUser(
   }
 }
 
-export function authenticateUser(
+export async function authenticateUser(
   db: DatabaseSync,
   account: string,
   password: string
-): SafeUser | null {
+): Promise<SafeUser | null> {
   const cleanAccount = account.trim().toLowerCase()
   const stmt = db.prepare(`
     SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1
@@ -95,11 +106,11 @@ export function authenticateUser(
   if (!row) {
     // Burn one scrypt run even for unknown accounts so response timing does
     // not reveal whether a username/email is registered.
-    hashPassword(password, 'oneimage-timing-equalizer')
+    await hashPassword(password, 'oneimage-timing-equalizer')
     return null
   }
 
-  if (!verifyPassword(password, String(row.salt), String(row.password_hash))) {
+  if (!(await verifyPassword(password, String(row.salt), String(row.password_hash)))) {
     return null
   }
 
@@ -167,7 +178,9 @@ export function updateUserProfile(
 
   const currentNickname = String(current.nickname || current.username)
   const currentAvatarColor = isAvatarColor(current.avatar_color) ? current.avatar_color : DEFAULT_AVATAR_COLOR
-  const nextNickname = (updates.nickname !== undefined ? updates.nickname.trim() : currentNickname).slice(0, 32)
+  // A missing or whitespace-only nickname keeps the stored value instead of
+  // blanking the display name.
+  const nextNickname = (updates.nickname?.trim() || currentNickname).slice(0, 32)
   // Invalid or missing colors keep the stored value instead of corrupting it.
   const nextAvatarColor = isAvatarColor(updates.avatar_color) ? updates.avatar_color : currentAvatarColor
 

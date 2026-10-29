@@ -16,7 +16,10 @@ export interface CloudProject {
   dimensions_width: number
   dimensions_height: number
   thumbnail_data: string
-  state_json: string
+  // The list endpoint returns metadata only; state_json (which can reach
+  // 16 MiB per draft) is available on GET /api/v1/projects/:id and on the
+  // save response. Restores read the local IndexedDB copy instead.
+  state_json?: string
   created_at: number
   updated_at: number
 }

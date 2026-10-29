@@ -5,15 +5,35 @@ import { extractSessionToken } from './auth-routes'
 import { validateSession } from './auth'
 import type { CloudProjectRow } from './db'
 import type { RateLimiter } from './rate-limit'
+import {
+  MAX_PROJECTS_PER_USER,
+  MAX_TOTAL_PROJECT_BYTES_PER_USER,
+  getUserStorageStats,
+  projectBytes,
+} from './cloud-quota'
 
 export interface ProjectRoutesOptions {
   // Cloud drafts are unbounded writes keyed only by a session token, so a
   // compromised or scripted account can hammer the database without a limiter.
   rateLimiter?: RateLimiter
+  // Per-user ceilings; overridable in tests, production uses the defaults.
+  quota?: { maxProjects: number; maxTotalBytes: number }
 }
+
+// The list must stay metadata-only: state_json carries the full serialized
+// editor state (stroke point arrays included) and can reach 16 MiB per draft,
+// so SELECT * here once made a 100-row list respond with up to ~1.6 GB. The
+// client renders thumbnails and titles from the list and restores drafts from
+// its local copy; the full row stays available per id.
+const PROJECT_LIST_COLUMNS =
+  'id, user_id, title, original_filename, dimensions_width, dimensions_height, thumbnail_data, created_at, updated_at'
 
 export function registerProjectRoutes(app: FastifyInstance, db: DatabaseSync, options: ProjectRoutesOptions = {}): void {
   const rateLimiter = options.rateLimiter
+  const quota = options.quota ?? {
+    maxProjects: MAX_PROJECTS_PER_USER,
+    maxTotalBytes: MAX_TOTAL_PROJECT_BYTES_PER_USER,
+  }
 
   const denyWhenOverLimit = (request: FastifyRequest, reply: FastifyReply): boolean => {
     if (rateLimiter && !rateLimiter.allow(request)) {
@@ -40,17 +60,34 @@ export function registerProjectRoutes(app: FastifyInstance, db: DatabaseSync, op
     return user
   }
 
-  // List user's cloud projects
+  // List user's cloud projects (metadata + thumbnail, never state_json)
   app.get('/api/v1/projects', async (request: FastifyRequest, reply: FastifyReply) => {
     if (denyWhenOverLimit(request, reply)) return
     const user = requireUser(request, reply)
     if (!user) return
 
     const stmt = db.prepare(`
-      SELECT * FROM cloud_projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100
+      SELECT ${PROJECT_LIST_COLUMNS} FROM cloud_projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100
     `)
-    const projects = stmt.all(user.id) as unknown as CloudProjectRow[]
+    const projects = stmt.all(user.id) as unknown as Omit<CloudProjectRow, 'state_json'>[]
     return reply.status(200).send({ projects })
+  })
+
+  // Full project incl. state_json, for a client that needs the serialized
+  // editor state of a draft whose original blob is not in local IndexedDB.
+  app.get('/api/v1/projects/:id', async (request: FastifyRequest<{
+    Params: { id: string }
+  }>, reply: FastifyReply) => {
+    if (denyWhenOverLimit(request, reply)) return
+    const user = requireUser(request, reply)
+    if (!user) return
+
+    const stmt = db.prepare('SELECT * FROM cloud_projects WHERE id = ? AND user_id = ?')
+    const project = stmt.get(request.params.id, user.id) as unknown as CloudProjectRow | undefined
+    if (!project) {
+      return reply.status(404).send({ error: 'project_not_found', message: '项目不存在' })
+    }
+    return reply.status(200).send({ project })
   })
 
   // Save / Sync project
@@ -96,6 +133,41 @@ export function registerProjectRoutes(app: FastifyInstance, db: DatabaseSync, op
       SELECT * FROM cloud_projects WHERE id = ? AND user_id = ?
     `)
     const existing = checkStmt.get(projectId, user.id) as unknown as CloudProjectRow | undefined
+
+    // Per-user quota: a new draft consumes one slot and its full size; an
+    // update only pays the delta over the stored row.
+    const incomingBytes = projectBytes({
+      title: String(title),
+      original_filename: String(original_filename),
+      thumbnail_data: String(thumbnail_data),
+      state_json: String(state_json),
+    })
+    const stats = getUserStorageStats(db, user.id)
+    if (existing) {
+      const projectedBytes = stats.bytes - projectBytes(existing) + incomingBytes
+      if (projectedBytes > quota.maxTotalBytes) {
+        return reply.status(413).send({
+          error: 'quota_exceeded',
+          reason: 'storage_limit',
+          message: '云端草稿总容量已达上限，请清理不再需要的草稿后再同步',
+        })
+      }
+    } else {
+      if (stats.projects >= quota.maxProjects) {
+        return reply.status(413).send({
+          error: 'quota_exceeded',
+          reason: 'project_limit',
+          message: '云端草稿数量已达上限，请清理不再需要的草稿后再同步',
+        })
+      }
+      if (stats.bytes + incomingBytes > quota.maxTotalBytes) {
+        return reply.status(413).send({
+          error: 'quota_exceeded',
+          reason: 'storage_limit',
+          message: '云端草稿总容量已达上限，请清理不再需要的草稿后再同步',
+        })
+      }
+    }
 
     if (existing) {
       const updateStmt = db.prepare(`
