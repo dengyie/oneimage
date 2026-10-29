@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --configLoader runner",
+    "dev": "node scripts/copy-ort-wasm.mjs && vite --configLoader runner",
     "server": "node scripts/start-server.mjs",
     "server:build": "node scripts/build-server.mjs",
+    "prebuild": "node scripts/copy-ort-wasm.mjs",
     "build": "tsc --noEmit && vite build --configLoader runner",
+    "fetch-model": "node scripts/fetch-model.mjs",
     "test": "vitest run --configLoader runner",
     "test:watch": "vitest"
   },
@@ -24,6 +26,7 @@
     "@vitejs/plugin-react": "6.1.2",
     "esbuild": "0.28.2",
     "fake-indexeddb": "^6.2.6",
+    "onnxruntime-web": "1.23.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tailwindcss": "^4.3.3",

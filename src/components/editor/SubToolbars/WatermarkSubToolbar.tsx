@@ -4,7 +4,13 @@ import type { ProvenanceResult } from '../../../infrastructure/openai-provenance
 
 export type WatermarkTab = 'add' | 'erase' | 'test'
 export type WatermarkLayout = 'tile' | 'corner'
-export type WatermarkEraseType = 'blur' | 'pixel' | 'blackout'
+export type WatermarkEraseType = 'blur' | 'pixel' | 'blackout' | 'ai'
+
+export interface SmartEraseStageInfo {
+  phase: 'model' | 'session' | 'inference'
+  loadedBytes?: number
+  totalBytes?: number | null
+}
 
 export interface WatermarkSubToolbarProps {
   onAddWatermark: (options: { text: string; layout: WatermarkLayout; opacity: number; color: string }) => void
@@ -13,6 +19,12 @@ export interface WatermarkSubToolbarProps {
   isCheckingProvenance: boolean
   provenanceResult: ProvenanceResult | null
   provenanceError?: string | null
+  /** Present when the current state has pending smart-erase regions. */
+  hasEraseAiRegions?: boolean
+  onRunSmartErase?: () => void
+  isSmartErasing?: boolean
+  smartEraseStage?: SmartEraseStageInfo | null
+  smartEraseError?: string | null
 }
 
 const WATERMARK_COLORS = [
@@ -29,6 +41,11 @@ export const WatermarkSubToolbar: React.FC<WatermarkSubToolbarProps> = ({
   isCheckingProvenance,
   provenanceResult,
   provenanceError,
+  hasEraseAiRegions = false,
+  onRunSmartErase,
+  isSmartErasing = false,
+  smartEraseStage,
+  smartEraseError,
 }) => {
   const [tab, setTab] = useState<WatermarkTab>('add')
 
@@ -209,6 +226,17 @@ export const WatermarkSubToolbar: React.FC<WatermarkSubToolbarProps> = ({
               >
                 实心遮蔽
               </button>
+              <button
+                type="button"
+                onClick={() => setEraseType('ai')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] transition-all ${
+                  eraseType === 'ai'
+                    ? 'bg-zinc-700 text-emerald-400 font-medium shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                智能修复
+              </button>
             </div>
           </div>
 
@@ -224,6 +252,45 @@ export const WatermarkSubToolbar: React.FC<WatermarkSubToolbarProps> = ({
             <UiIcon name="crop" size={13} strokeWidth={2.2} />
             <span>生成消除水印选区</span>
           </button>
+
+          {eraseType === 'ai' && (
+            <>
+              <p className="text-[11px] text-zinc-400 leading-relaxed bg-zinc-800/40 p-2 rounded-lg border border-emerald-900/40">
+                智能修复在浏览器本地用 MI-GAN 从周围画面合成水印区域：掩膜外像素逐位保留，原图不上传。首次使用需下载 27MB 模型。
+              </p>
+              <button
+                type="button"
+                disabled={isSmartErasing || !hasEraseAiRegions}
+                onClick={onRunSmartErase}
+                className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-950 font-medium text-[11px] transition-all shadow-md shadow-sky-500/20 active:scale-[0.99]"
+              >
+                {isSmartErasing ? (
+                  <>
+                    <span className="animate-spin"><UiIcon name="loader" size={13} /></span>
+                    <span>
+                      {smartEraseStage?.phase === 'model' && smartEraseStage.totalBytes
+                        ? `下载模型 ${Math.round((smartEraseStage.loadedBytes ?? 0) / 1048576)}/${Math.round(smartEraseStage.totalBytes / 1048576)}MB`
+                        : smartEraseStage?.phase === 'session'
+                        ? '初始化推理引擎…'
+                        : smartEraseStage?.phase === 'inference'
+                        ? '正在合成修复…'
+                        : '准备中…'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <UiIcon name="sparkles" size={13} />
+                    <span>{hasEraseAiRegions ? '运行智能修复（虚线区域）' : '请先生成智能修复选区'}</span>
+                  </>
+                )}
+              </button>
+              {smartEraseError && (
+                <div className="text-[11px] text-rose-400 bg-rose-950/40 border border-rose-900/60 p-2 rounded-lg font-mono">
+                  {smartEraseError}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

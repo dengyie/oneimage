@@ -198,6 +198,40 @@ function traceTransformedRect(context: CanvasRenderingContext2D | OffscreenCanva
   context.closePath()
 }
 
+// Pending smart-erase regions render as a dashed marquee in the live preview
+// but are never baked into exports: the App strips 'erase-ai' layers before
+// rendering the snapshot it feeds to the inpainting worker.
+function drawEraseAiPreview(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: AnnotationLayer, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
+  if (!layer.rect) return
+  context.save()
+  context.setLineDash([6 * scale, 4 * scale])
+  context.lineWidth = Math.max(1.5, 2 * scale)
+  context.strokeStyle = layer.color || '#34d399'
+  context.beginPath()
+  traceTransformedRect(context, layer.rect, state, outputWidth, outputHeight, scale, showFullSource)
+  context.stroke()
+  context.restore()
+}
+
+/**
+ * Paints every pending smart-erase region as white-on-transparent so the caller
+ * can turn it into the binary inpaint mask. Uses the same crop/rotate/flip
+ * mapping as the annotation renderer, so the mask lines up with the marquee
+ * the user positioned, at any output resolution.
+ */
+export function drawEraseAiMask(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource = false): void {
+  const annotations = state.annotations ?? []
+  for (const layer of annotations) {
+    if (layer.type !== 'erase-ai' || !layer.rect) continue
+    context.save()
+    context.fillStyle = '#ffffff'
+    context.beginPath()
+    traceTransformedRect(context, layer.rect, state, outputWidth, outputHeight, scale, showFullSource)
+    context.fill()
+    context.restore()
+  }
+}
+
 function drawSource(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, source: DecodedSource, state: EditorState, outputWidth: number, outputHeight: number, scale: number, adjustments: Adjustments, showFullSource: boolean): void {
   context.save()
   context.translate(outputWidth / 2, outputHeight / 2)
@@ -371,6 +405,9 @@ function drawAnnotations(
         context.beginPath?.()
         context.ellipse?.(center.x, center.y, rx, ry, (state.rotation * Math.PI) / 180, 0, Math.PI * 2)
         context.stroke?.()
+      } else if (layer.type === 'erase-ai') {
+        // Marquee only; never painted into the image itself.
+        drawEraseAiPreview(context, layer, state, outputWidth, outputHeight, scale, showFullSource)
       } else if (layer.type === 'mosaic') {
         if (!layer.rect) continue
         if (layer.mosaicType === 'blur') {
