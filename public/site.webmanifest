@@ -1,0 +1,29 @@
+{
+  "name": "OneImage · 图片工作台",
+  "short_name": "OneImage",
+  "description": "本地优先的图片处理工作台：转换、编辑、水印与溯源，图片不出浏览器。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1412",
+  "theme_color": "#0d1412",
+  "icons": [
+    {
+      "src": "/favicon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
