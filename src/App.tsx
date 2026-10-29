@@ -63,8 +63,8 @@ import {
 } from './infrastructure/history-storage'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
 import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
-import type { WatermarkLayout, WatermarkEraseType, SmartEraseStageInfo } from './components/editor/SubToolbars/WatermarkSubToolbar'
-import { runSmartErase, disposeSmartEraseWorker } from './infrastructure/inpaint/smart-erase'
+import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
+import { runSmartErase, disposeSmartEraseWorker, SMART_ERASE_MAX_EDGE, type SmartEraseStage } from './infrastructure/inpaint/smart-erase'
 import { drawEraseAiMask } from './application/editor-renderer'
 import './styles.css'
 
@@ -117,7 +117,7 @@ export function App() {
   const [imagegenEnabled, setImagegenEnabled] = useState(false)
   // Smart erase (browser-local MI-GAN inpainting)
   const [isSmartErasing, setIsSmartErasing] = useState(false)
-  const [smartEraseStage, setSmartEraseStage] = useState<SmartEraseStageInfo | null>(null)
+  const [smartEraseStage, setSmartEraseStage] = useState<SmartEraseStage | null>(null)
   const [smartEraseError, setSmartEraseError] = useState<string | null>(null)
 
   // History & Storage State
@@ -772,16 +772,17 @@ export function App() {
     setSmartEraseError(null)
     setSmartEraseStage(null)
     try {
-      // The snapshot fed to the model must not contain the marquee outlines,
-      // so 'erase-ai' layers are stripped; the mask itself is drawn from the
-      // unstripped state through the same transform pipeline.
-      const cleanState: typeof state = {
-        ...state,
-        annotations: (state.annotations ?? []).filter((layer) => layer.type !== 'erase-ai'),
-      }
-      const snapshot = await exportEditor(decodedSource, cleanState, factory, 'image/png', 1)
+      // exportEditor strips the marquee layers itself; the mask is drawn from
+      // the unstripped state through the same transform pipeline.
+      const snapshot = await exportEditor(decodedSource, state, factory, 'image/png', 1)
       const bitmap = await createImageBitmap(snapshot)
       const { width, height } = bitmap
+      // The pipeline pads to 512-aligned tiles internally; an unbounded source
+      // (a 25MB PNG can be 10000px wide) would blow the WASM linear memory.
+      if (Math.max(width, height) > SMART_ERASE_MAX_EDGE) {
+        bitmap.close()
+        throw new Error(`图片最大边 ${Math.max(width, height)}px 超过智能修复上限 ${SMART_ERASE_MAX_EDGE}px，请先裁剪或缩放`)
+      }
 
       const makeCanvas = () => factory.create(width, height)
       const ctxOf = (canvas: ReturnType<typeof factory.create>) =>
@@ -814,12 +815,7 @@ export function App() {
 
       const result = await runSmartErase(
         { image: imageData, mask: maskData, composite: alphaData },
-        (stage) =>
-          setSmartEraseStage({
-            phase: stage.phase,
-            loadedBytes: stage.phase === 'model' ? stage.loadedBytes : undefined,
-            totalBytes: stage.phase === 'model' ? stage.totalBytes : undefined,
-          })
+        setSmartEraseStage
       )
 
       const outCanvas = makeCanvas()

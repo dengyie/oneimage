@@ -1,16 +1,11 @@
 import React, { useState } from 'react'
 import { UiIcon } from '../../ui/UiIcon'
 import type { ProvenanceResult } from '../../../infrastructure/openai-provenance-adapter'
+import type { SmartEraseStage } from '../../../infrastructure/inpaint/smart-erase'
 
 export type WatermarkTab = 'add' | 'erase' | 'test'
 export type WatermarkLayout = 'tile' | 'corner'
 export type WatermarkEraseType = 'blur' | 'pixel' | 'blackout' | 'ai'
-
-export interface SmartEraseStageInfo {
-  phase: 'model' | 'session' | 'inference'
-  loadedBytes?: number
-  totalBytes?: number | null
-}
 
 export interface WatermarkSubToolbarProps {
   onAddWatermark: (options: { text: string; layout: WatermarkLayout; opacity: number; color: string }) => void
@@ -23,7 +18,7 @@ export interface WatermarkSubToolbarProps {
   hasEraseAiRegions?: boolean
   onRunSmartErase?: () => void
   isSmartErasing?: boolean
-  smartEraseStage?: SmartEraseStageInfo | null
+  smartEraseStage?: SmartEraseStage | null
   smartEraseError?: string | null
 }
 

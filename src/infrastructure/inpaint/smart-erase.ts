@@ -1,8 +1,12 @@
 // Main-thread orchestrator for the MI-GAN smart eraser. Owns the worker
 // lifecycle, canvas plumbing and progress reporting so UI code stays
-// declarative. All heavy tensor work happens inside the worker.
+// declarative. All heavy tensor work happens inside the worker. Requests are
+// correlated by runId so concurrent runs can never consume each other's
+// result, even if a caller overlaps them.
 
-import type { SmartEraseResponse } from './inpaint-worker'
+import type { SmartEraseRequest, SmartEraseResponse } from './inpaint-worker'
+
+export const SMART_ERASE_MAX_EDGE = 6144
 
 export interface SmartEraseInput {
   /** Full-resolution RGBA snapshot of the current editor state. */
@@ -18,13 +22,23 @@ export type SmartEraseStage =
   | { phase: 'session' }
   | { phase: 'inference' }
 
+// Minimal structural contract so tests can inject a fake worker; a real
+// Worker satisfies it as-is. Handlers are EventListener-typed because the DOM
+// and worker lib overload sets disagree on the event parameter.
+export interface WorkerLike {
+  addEventListener(type: string, listener: EventListener): void
+  removeEventListener(type: string, listener: EventListener): void
+  postMessage(message: unknown, transfer?: Transferable[]): void
+  terminate(): void
+}
+
 function createWorker(): Worker {
   return new Worker(new URL('./inpaint-worker.ts', import.meta.url), { type: 'module' })
 }
 
-let worker: Worker | null = null
+let worker: WorkerLike | null = null
 
-function getWorker(): Worker {
+function getWorker(): WorkerLike {
   if (!worker) worker = createWorker()
   return worker
 }
@@ -41,15 +55,17 @@ export function disposeSmartEraseWorker(): void {
 export function runSmartErase(
   input: SmartEraseInput,
   onStage: (stage: SmartEraseStage) => void,
-  signal?: AbortSignal
+  options: { workerFactory?: () => WorkerLike } = {}
 ): Promise<ImageData> {
   const { width, height } = input.image
+  const runId = crypto.randomUUID()
   const transfers: ArrayBuffer[] = [input.image.data.buffer, input.mask.data.buffer, input.composite.data.buffer]
 
   return new Promise<ImageData>((resolve, reject) => {
-    const active = getWorker()
-    const onMessage = (event: MessageEvent<SmartEraseResponse>) => {
+    const active = options.workerFactory ? options.workerFactory() : getWorker()
+    const onMessage = (event: MessageEvent<SmartEraseResponse & { runId?: string }>) => {
       const message = event.data
+      if (message.runId !== runId) return
       if (message.type === 'progress') {
         onStage({ phase: 'model', loadedBytes: message.loadedBytes, totalBytes: message.totalBytes })
         return
@@ -64,38 +80,32 @@ export function runSmartErase(
         return
       }
       cleanup()
-      disposeSmartEraseWorker()
+      if (!options.workerFactory) disposeSmartEraseWorker()
       reject(new Error(message.message))
     }
     const onError = (event: ErrorEvent) => {
       cleanup()
-      disposeSmartEraseWorker()
+      if (!options.workerFactory) disposeSmartEraseWorker()
       reject(new Error(event.message || '智能修复 Worker 崩溃'))
-    }
-    const onAbort = () => {
-      cleanup()
-      disposeSmartEraseWorker()
-      reject(new DOMException('已取消', 'AbortError'))
     }
 
     const cleanup = () => {
-      active.removeEventListener('message', onMessage)
-      active.removeEventListener('error', onError)
-      signal?.removeEventListener('abort', onAbort)
+      active.removeEventListener('message', onMessage as unknown as EventListener)
+      active.removeEventListener('error', onError as unknown as EventListener)
     }
 
-    active.addEventListener('message', onMessage)
-    active.addEventListener('error', onError)
-    signal?.addEventListener('abort', onAbort)
+    active.addEventListener('message', onMessage as unknown as EventListener)
+    active.addEventListener('error', onError as unknown as EventListener)
     active.postMessage(
       {
         type: 'run',
+        runId,
         width,
         height,
         image: input.image.data.buffer,
         mask: input.mask.data.buffer,
         composite: input.composite.data.buffer,
-      },
+      } satisfies SmartEraseRequest,
       transfers
     )
   })

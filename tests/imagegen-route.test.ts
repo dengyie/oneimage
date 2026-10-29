@@ -130,7 +130,84 @@ describe('imagegen routes', () => {
     appDb.close()
   })
 
+  it('guards url-style downloads: https cross-host without auth, private hosts and http rejected', async () => {
+    const seen: { url: string; auth: string | undefined }[] = []
+    // Upstream generations responses in the order the five calls below arrive;
+    // the route must reject the unsafe ones before any image fetch happens.
+    const upstreamUrls = [
+      'https://cdn.example/out.png',
+      'https://upstream.example/out.png',
+      'http://cdn.example/out.png',
+      'https://169.254.169.254/latest/meta-data',
+    ]
+    let generationCall = 0
+    const fetchImpl = vi.fn().mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url)
+      if (target.endsWith('/images/generations')) {
+        const itemUrl = upstreamUrls[generationCall++] ?? ''
+        return new Response(JSON.stringify({ data: [{ url: itemUrl }] }), { status: 200 })
+      }
+      seen.push({
+        url: target,
+        auth: init?.headers ? ((init.headers as Record<string, string>).Authorization as string | undefined) : undefined,
+      })
+      // A fresh Response per fetch: bodies are consumed by arrayBuffer().
+      return new Response(new Uint8Array(8), { status: 200, headers: { 'content-type': 'image/png' } })
+    })
+    const app = Fastify()
+    const appDb = initDatabase(':memory:')
+    registerImagegenRoutes(app, appDb.db, {
+      providers: [provider()],
+      dailyCap: 50,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    const call = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/imagegen',
+        payload: { provider: 'test', model: 'img-model-1', prompt: 'p' },
+      })
+
+    // https cross-host is allowed but must not carry the provider key.
+    const crossHost = await call()
+    expect(crossHost.statusCode).toBe(200)
+    expect(seen.at(-1)).toEqual({ url: 'https://cdn.example/out.png', auth: undefined })
+
+    // Same-host https keeps the authenticated download.
+    const sameHost = await call()
+    expect(sameHost.statusCode).toBe(200)
+    expect(seen.at(-1)).toEqual({ url: 'https://upstream.example/out.png', auth: 'Bearer sk-test' })
+
+    // Plain http cross-host and any private/loopback host are rejected before
+    // the server fetches anything.
+    const plainHttp = await call()
+    expect(plainHttp.statusCode).toBe(502)
+    expect(JSON.parse(plainHttp.body).message).toContain('不被允许的图片地址')
+    const loopback = await call()
+    expect(loopback.statusCode).toBe(502)
+    expect(JSON.parse(loopback.body).message).toContain('内网/回环')
+    expect(seen.filter((s) => s.url.includes('169.254'))).toHaveLength(0)
+    appDb.close()
+  })
+
+  it('caps oversized b64_json payloads instead of holding unbounded upstream memory', async () => {
+    const oversized = 'A'.repeat(45_000_000)
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: oversized }] }), { status: 200 }))
+    const app = Fastify()
+    const appDb = initDatabase(':memory:')
+    registerImagegenRoutes(app, appDb.db, { providers: [provider()], dailyCap: 50, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/imagegen',
+      payload: { provider: 'test', model: 'img-model-1', prompt: 'p' },
+    })
+    expect(res.statusCode).toBe(502)
+    expect(JSON.parse(res.body).message).toContain('32MB 上限')
+    appDb.close()
+  })
+
   it('maps upstream auth/quota failures to safe client errors', async () => {
+
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { message: 'Incorrect API key' } }), { status: 401 }))
     const app = Fastify()
     const appDb = initDatabase(':memory:')
