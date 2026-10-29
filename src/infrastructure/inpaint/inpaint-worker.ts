@@ -6,6 +6,7 @@
 // One session is created lazily and reused for every subsequent run.
 
 import { ensureMiganModel } from './model-cache'
+import { ORT_VERSION } from './ort-version'
 import {
   compositeMasked,
   maskToBinary,
@@ -31,7 +32,8 @@ interface OrtNamespace {
   Tensor: new (type: string, data: Uint8Array, dims: number[]) => unknown
 }
 
-const ORT_BUNDLE_URL = '/models/ort/ort.bundle.min.mjs'
+const ORT_BASE = `/models/ort/${ORT_VERSION}`
+const ORT_BUNDLE_URL = `${ORT_BASE}/ort.bundle.min.mjs`
 
 export interface SmartEraseRequest {
   type: 'run'
@@ -68,7 +70,7 @@ async function createSession(): Promise<OrtSession> {
   // SIMD so ORT does not stall on a missing SharedArrayBuffer.
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
   ort.env.wasm.numThreads = isolated ? Math.min(4, navigator.hardwareConcurrency || 4) : 1
-  ort.env.wasm.wasmPaths = '/models/ort/'
+  ort.env.wasm.wasmPaths = `${ORT_BASE}/`
 
   const model = await ensureMiganModel((progress) => {
     postMessage({
