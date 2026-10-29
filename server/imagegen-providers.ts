@@ -31,9 +31,47 @@ export class ImagegenUpstreamError extends Error {
 }
 
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024
+// base64 inflates by 4/3, so 32 MiB of image ≈ 44 MB of characters.
+const MAX_B64_JSON_LENGTH = 44_000_000
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`
+}
+
+// The download URL comes from the upstream response body, i.e. from data an
+// upstream operator does not fully control (aggregators echo model-provider
+// URLs). Guard the server-side fetch: https for anything that leaves the
+// operator's own host, no loopback/private hosts, and the provider key must
+// never travel to a host other than the configured baseUrl.
+export function assertSafeImageUrl(rawUrl: string, provider: ImagegenProviderConfig): URL {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new ImagegenUpstreamError('上游返回的图片地址无法解析', 0, 502)
+  }
+  const sameHost = url.host === new URL(provider.baseUrl).host
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && sameHost)) {
+    throw new ImagegenUpstreamError(`上游返回了不被允许的图片地址（${url.protocol}//${url.host}）`, 0, 502)
+  }
+  if (isPrivateHost(url.hostname)) {
+    throw new ImagegenUpstreamError('上游返回了指向内网/回环地址的图片链接，已拒绝', 0, 502)
+  }
+  return url
+}
+
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal')) return true
+  if (host === '0.0.0.0' || host === '::' || host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    if (a === 127 || a === 10 || a === 0 || a === 169 || a === 192) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a >= 224) return true
+  }
+  return false
 }
 
 async function readUpstreamError(response: Response): Promise<string> {
@@ -50,10 +88,10 @@ async function readUpstreamError(response: Response): Promise<string> {
 }
 
 function clientStatusFor(upstreamStatus: number): number {
-  // The key/quota problem belongs to the operator, not the visitor: keep the
-  // contract at 502 with a safe message, except for request-shape issues the
-  // client can actually fix.
-  if (upstreamStatus === 400 || upstreamStatus === 404 || upstreamStatus === 422) return 502
+  // Upstream 4xx is normalized to 502: model-level errors (unsupported size,
+  // unknown upstream model) are not something the client can fix, and the
+  // operator's key/quota wording must not become a client-facing contract.
+  // Only 429 propagates so clients can back off.
   if (upstreamStatus === 429) return 429
   return 502
 }
@@ -110,9 +148,16 @@ async function generateOpenAIImages(
   const images: GeneratedImage[] = []
   for (const item of data) {
     if (typeof item.b64_json === 'string' && item.b64_json.length > 0) {
+      if (item.b64_json.length > MAX_B64_JSON_LENGTH) {
+        throw new ImagegenUpstreamError('生成结果超过 32MB 上限', 0, 502)
+      }
       images.push({ mimeType: 'image/png', base64: item.b64_json })
     } else if (typeof item.url === 'string' && item.url.length > 0) {
-      images.push(await fetchImageBytes(item.url, provider.apiKey, signal, fetchImpl))
+      const url = assertSafeImageUrl(item.url, provider)
+      // The key stays on the operator's own upstream host; third-party CDN
+      // hosts get an unauthenticated download.
+      const sameHost = url.host === new URL(provider.baseUrl).host
+      images.push(await fetchImageBytes(item.url, sameHost ? provider.apiKey : null, signal, fetchImpl))
     }
   }
   if (images.length === 0) {

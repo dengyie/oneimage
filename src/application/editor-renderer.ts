@@ -76,7 +76,13 @@ export function renderEditor(source: DecodedSource, state: EditorState, factory:
 }
 
 export async function exportEditor(source: DecodedSource, state: EditorState, factory: CanvasFactory, mime: string, quality: number, signal?: AbortSignal): Promise<Blob> {
-  const rendered = renderEditor(source, state, factory, Number.POSITIVE_INFINITY, signal)
+  // Smart-erase marquees are intent markers, not content: keep them out of
+  // every export path (quick save, format export, provenance snapshot) while
+  // the live preview keeps showing them via renderEditor.
+  const exportState = state.annotations?.some((layer) => layer.type === 'erase-ai')
+    ? { ...state, annotations: state.annotations.filter((layer) => layer.type !== 'erase-ai') }
+    : state
+  const rendered = renderEditor(source, exportState, factory, Number.POSITIVE_INFINITY, signal)
   throwIfAborted(signal)
   if (rendered.canvas.convertToBlob) return rendered.canvas.convertToBlob({ type: mime, quality: clampQuality(quality) })
   if (!rendered.canvas.toBlob) throw new Error('editor canvas export unavailable')
@@ -406,7 +412,8 @@ function drawAnnotations(
         context.ellipse?.(center.x, center.y, rx, ry, (state.rotation * Math.PI) / 180, 0, Math.PI * 2)
         context.stroke?.()
       } else if (layer.type === 'erase-ai') {
-        // Marquee only; never painted into the image itself.
+        // Preview-only dashed marquee; exportEditor strips this layer, so it
+        // never reaches saved output or provenance snapshots.
         drawEraseAiPreview(context, layer, state, outputWidth, outputHeight, scale, showFullSource)
       } else if (layer.type === 'mosaic') {
         if (!layer.rect) continue

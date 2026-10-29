@@ -6,7 +6,8 @@ import { MosaicSubToolbar, type MosaicType } from './SubToolbars/MosaicSubToolba
 import { TextSubToolbar } from './SubToolbars/TextSubToolbar'
 import { AdjustSubToolbar } from './SubToolbars/AdjustSubToolbar'
 import { CompressSubToolbar } from './SubToolbars/CompressSubToolbar'
-import { WatermarkSubToolbar, type SmartEraseStageInfo, type WatermarkLayout, type WatermarkEraseType } from './SubToolbars/WatermarkSubToolbar'
+import { WatermarkSubToolbar, type WatermarkLayout, type WatermarkEraseType } from './SubToolbars/WatermarkSubToolbar'
+import type { SmartEraseStage } from '../../infrastructure/inpaint/smart-erase'
 import type { Adjustments, TextBgStyle } from '../../domain/editor-state'
 import type { ProvenanceResult } from '../../infrastructure/openai-provenance-adapter'
 
@@ -61,7 +62,7 @@ interface BottomDockProps {
   hasEraseAiRegions?: boolean
   onRunSmartErase?: () => void
   isSmartErasing?: boolean
-  smartEraseStage?: SmartEraseStageInfo | null
+  smartEraseStage?: SmartEraseStage | null
   smartEraseError?: string | null
 
   // Compress props

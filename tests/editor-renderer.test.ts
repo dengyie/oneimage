@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { PREVIEW_MAX_EDGE, planRenderDimensions, renderEditor, resolveRenderDimensions, schedulePreview, type CanvasFactory, type DecodedSource, type RenderCanvas } from '../src/application/editor-renderer'
+import { PREVIEW_MAX_EDGE, exportEditor, planRenderDimensions, renderEditor, resolveRenderDimensions, schedulePreview, type CanvasFactory, type DecodedSource, type RenderCanvas } from '../src/application/editor-renderer'
 import { createEditorState } from '../src/domain/editor-state'
 
 describe('editor renderer', () => {
@@ -340,5 +340,67 @@ describe('render plan', () => {
     expect({ width: rendered.width, height: rendered.height }).toEqual(
       planRenderDimensions(state, PREVIEW_MAX_EDGE, true)
     )
+  })
+})
+
+describe('smart-erase marquee rendering', () => {
+  const recordingFactory = () => {
+    const calls = { setLineDash: 0, stroke: 0, fill: 0 }
+    const factory: CanvasFactory = {
+      create: (width, height) => {
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          save: () => {},
+          restore: () => {},
+          beginPath: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          closePath: () => {},
+          clearRect: () => {},
+          drawImage: () => {},
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          setLineDash: () => { calls.setLineDash += 1 },
+          stroke: () => { calls.stroke += 1 },
+          fill: () => { calls.fill += 1 },
+          measureText: () => ({ width: 10 }),
+        }
+        return {
+          width,
+          height,
+          getContext: () => context as never,
+          convertToBlob: async () => new Blob(),
+        } as never
+      },
+    }
+    return { factory, calls }
+  }
+
+  const marqueeState = () => {
+    const state = createEditorState(100, 100)
+    state.annotations = [
+      { id: 'm1', type: 'erase-ai', rect: { x: 10, y: 10, width: 40, height: 40 }, color: '#34d399', strokeWidth: 0 },
+    ]
+    return state
+  }
+
+  it('keeps the marquee in the live preview as a dashed stroke', async () => {
+    const { factory, calls } = recordingFactory()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    renderEditor(source, marqueeState(), factory, { maxEdge: 100 })
+    expect(calls.setLineDash).toBeGreaterThanOrEqual(1)
+    expect(calls.stroke).toBeGreaterThanOrEqual(1)
+    expect(calls.fill).toBe(0)
+  })
+
+  it('never bakes the marquee into exports', async () => {
+    const { factory, calls } = recordingFactory()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    await exportEditor(source, marqueeState(), factory, 'image/png', 1)
+    expect(calls.setLineDash).toBe(0)
+    expect(calls.stroke).toBe(0)
+    expect(calls.fill).toBe(0)
   })
 })

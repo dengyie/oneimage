@@ -37,6 +37,7 @@ const ORT_BUNDLE_URL = `${ORT_BASE}/ort.bundle.min.mjs`
 
 export interface SmartEraseRequest {
   type: 'run'
+  runId: string
   width: number
   height: number
   /** RGBA of the current full-resolution snapshot. */
@@ -48,10 +49,10 @@ export interface SmartEraseRequest {
 }
 
 export type SmartEraseResponse =
-  | { type: 'progress'; phase: 'model'; loadedBytes: number; totalBytes: number | null }
-  | { type: 'stage'; stage: 'session' | 'inference' }
-  | { type: 'done'; rgba: ArrayBuffer }
-  | { type: 'error'; message: string }
+  | { type: 'progress'; runId: string; phase: 'model'; loadedBytes: number; totalBytes: number | null }
+  | { type: 'stage'; runId: string; stage: 'session' | 'inference' }
+  | { type: 'done'; runId: string; rgba: ArrayBuffer }
+  | { type: 'error'; runId: string; message: string }
 
 let ortPromise: Promise<OrtNamespace> | null = null
 let session: OrtSession | null = null
@@ -64,7 +65,7 @@ function loadOrt(): Promise<OrtNamespace> {
   return ortPromise
 }
 
-async function createSession(): Promise<OrtSession> {
+async function createSession(runId: string): Promise<OrtSession> {
   const ort = await loadOrt()
   // Threads need cross-origin isolation; without COOP/COEP keep single-thread
   // SIMD so ORT does not stall on a missing SharedArrayBuffer.
@@ -72,9 +73,12 @@ async function createSession(): Promise<OrtSession> {
   ort.env.wasm.numThreads = isolated ? Math.min(4, navigator.hardwareConcurrency || 4) : 1
   ort.env.wasm.wasmPaths = `${ORT_BASE}/`
 
+  // Model download only ever happens on the run that created the session, so
+  // its progress messages can carry that run's id.
   const model = await ensureMiganModel((progress) => {
-    postMessage({
+    scope.postMessage({
       type: 'progress',
+      runId,
       phase: 'model',
       loadedBytes: progress.loadedBytes,
       totalBytes: progress.totalBytes,
@@ -93,10 +97,10 @@ async function createSession(): Promise<OrtSession> {
   }
 }
 
-async function getSession(): Promise<NonNullable<typeof session>> {
+async function getSession(runId: string): Promise<OrtSession> {
   if (session) return session
   if (!sessionCreation) {
-    sessionCreation = createSession()
+    sessionCreation = createSession(runId)
       .then((created) => {
         session = created
         return created
@@ -109,12 +113,24 @@ async function getSession(): Promise<NonNullable<typeof session>> {
   return sessionCreation
 }
 
+// Omit over a union collapses to the shared keys, so distribute manually to
+// keep per-variant required fields intact.
+type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+type SmartEraseReport = DistributedOmit<SmartEraseResponse, 'runId'>
+
+// self.postMessage resolves to the Window overload set under the DOM lib; the
+// worker-scope transfer-list form needs an explicit cast.
+const scope = self as unknown as { postMessage(message: unknown, transfer?: Transferable[]): void }
+
 async function run(req: SmartEraseRequest): Promise<ArrayBuffer> {
-  postMessage({ type: 'stage', stage: 'session' } satisfies SmartEraseResponse)
-  const inferenceSession = await getSession()
+  const report = (response: SmartEraseReport, transfer?: ArrayBuffer): void => {
+    scope.postMessage({ ...response, runId: req.runId } satisfies SmartEraseResponse, transfer ? [transfer] : undefined)
+  }
+  report({ type: 'stage', stage: 'session' })
+  const inferenceSession = await getSession(req.runId)
   const ort = await loadOrt()
 
-  postMessage({ type: 'stage', stage: 'inference' } satisfies SmartEraseResponse)
+  report({ type: 'stage', stage: 'inference' })
   const imagePlane: RgbaPlane = { data: new Uint8ClampedArray(req.image), width: req.width, height: req.height }
   const maskPlane: RgbaPlane = { data: new Uint8ClampedArray(req.mask), width: req.width, height: req.height }
   const alphaPlane: RgbaPlane = { data: new Uint8ClampedArray(req.composite), width: req.width, height: req.height }
@@ -144,13 +160,15 @@ async function run(req: SmartEraseRequest): Promise<ArrayBuffer> {
 
 self.onmessage = (event: MessageEvent<SmartEraseRequest>) => {
   if (event.data?.type !== 'run') return
-  run(event.data)
+  const req = event.data
+  run(req)
     .then((rgba) => {
-      postMessage({ type: 'done', rgba } satisfies SmartEraseResponse, [rgba])
+      scope.postMessage({ type: 'done', runId: req.runId, rgba } satisfies SmartEraseResponse, [rgba])
     })
     .catch((err: unknown) => {
-      postMessage({
+      scope.postMessage({
         type: 'error',
+        runId: req.runId,
         message: err instanceof Error ? err.message : String(err),
       } satisfies SmartEraseResponse)
     })
