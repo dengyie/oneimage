@@ -6,7 +6,7 @@ import { MosaicSubToolbar, type MosaicType } from './SubToolbars/MosaicSubToolba
 import { TextSubToolbar } from './SubToolbars/TextSubToolbar'
 import { AdjustSubToolbar } from './SubToolbars/AdjustSubToolbar'
 import { CompressSubToolbar } from './SubToolbars/CompressSubToolbar'
-import { WatermarkSubToolbar, type WatermarkLayout, type WatermarkEraseType } from './SubToolbars/WatermarkSubToolbar'
+import { WatermarkSubToolbar, type SmartEraseStageInfo, type WatermarkLayout, type WatermarkEraseType } from './SubToolbars/WatermarkSubToolbar'
 import type { Adjustments, TextBgStyle } from '../../domain/editor-state'
 import type { ProvenanceResult } from '../../infrastructure/openai-provenance-adapter'
 
@@ -58,6 +58,11 @@ interface BottomDockProps {
   onCheckProvenanceTarget: (target: 'current' | 'original') => void
   provenanceResultDetail: ProvenanceResult | null
   provenanceError?: string | null
+  hasEraseAiRegions?: boolean
+  onRunSmartErase?: () => void
+  isSmartErasing?: boolean
+  smartEraseStage?: SmartEraseStageInfo | null
+  smartEraseError?: string | null
 
   // Compress props
   outputMime: string
@@ -117,6 +122,11 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onCheckProvenanceTarget,
   provenanceResultDetail,
   provenanceError,
+  hasEraseAiRegions,
+  onRunSmartErase,
+  isSmartErasing,
+  smartEraseStage,
+  smartEraseError,
   outputMime,
   quality,
   estimatedBytes,
@@ -187,6 +197,11 @@ export const BottomDock: React.FC<BottomDockProps> = ({
             isCheckingProvenance={isCheckingProvenance ?? false}
             provenanceResult={provenanceResultDetail}
             provenanceError={provenanceError}
+            hasEraseAiRegions={hasEraseAiRegions}
+            onRunSmartErase={onRunSmartErase}
+            isSmartErasing={isSmartErasing}
+            smartEraseStage={smartEraseStage}
+            smartEraseError={smartEraseError}
           />
         )}
         {activeTool === 'compress' && (

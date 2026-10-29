@@ -63,7 +63,9 @@ import {
 } from './infrastructure/history-storage'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
 import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
-import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
+import type { WatermarkLayout, WatermarkEraseType, SmartEraseStageInfo } from './components/editor/SubToolbars/WatermarkSubToolbar'
+import { runSmartErase, disposeSmartEraseWorker } from './infrastructure/inpaint/smart-erase'
+import { drawEraseAiMask } from './application/editor-renderer'
 import './styles.css'
 
 /** Stable per-document id; also the IndexedDB draft id for local drafts. */
@@ -113,6 +115,10 @@ export function App() {
   // so the entry buttons stay hidden until the operator configures providers.
   const [showImageGenModal, setShowImageGenModal] = useState(false)
   const [imagegenEnabled, setImagegenEnabled] = useState(false)
+  // Smart erase (browser-local MI-GAN inpainting)
+  const [isSmartErasing, setIsSmartErasing] = useState(false)
+  const [smartEraseStage, setSmartEraseStage] = useState<SmartEraseStageInfo | null>(null)
+  const [smartEraseError, setSmartEraseError] = useState<string | null>(null)
 
   // History & Storage State
   const [localHistoryItems, setLocalHistoryItems] = useState<LocalHistoryItem[]>([])
@@ -226,6 +232,7 @@ export function App() {
 
   // Visible editor state: live gesture output wins over the committed snapshot.
   const currentState = sessionState(session)
+  const hasEraseAiRegions = Boolean(currentState?.annotations?.some((layer) => layer.type === 'erase-ai'))
 
   // The crop pills derive their selection from the editor state, so undo and
   // history restore move the highlight with the crop instead of leaving a
@@ -718,6 +725,14 @@ export function App() {
                 strokeWidth: 0,
                 opacity: 1,
               }
+            : eraseType === 'ai'
+            ? {
+                id: layerId,
+                type: 'erase-ai',
+                rect: { x: boxX, y: boxY, width: boxW, height: boxH },
+                color: '#34d399',
+                strokeWidth: 0,
+              }
             : {
                 id: layerId,
                 type: 'mosaic',
@@ -730,10 +745,114 @@ export function App() {
 
         return { ...state, annotations: [...(state.annotations ?? []), newLayer] }
       })
-      showToast('已在画面中央生成水印消除遮罩选区（支持自由移动或缩放）', 'success')
+      showToast(
+        eraseType === 'ai'
+          ? '已生成智能修复选区（绿色虚线框），点击「运行智能修复」执行'
+          : '已在画面中央生成水印消除遮罩选区（支持自由移动或缩放）',
+        'success'
+      )
     },
     [commitEdit, showToast]
   )
+
+  // Smart erase: bake the current state at full resolution, run browser-local
+  // MI-GAN under the pending marquee regions, and open the result as a new
+  // document. Pixels outside the mask are preserved bit-for-bit by the
+  // compositor; everything here stays on-device.
+  const handleRunSmartErase = useCallback(async () => {
+    const state = sessionState(sessionRef.current)
+    if (!decodedSource || !file || !state) return
+    const aiLayers = (state.annotations ?? []).filter((layer) => layer.type === 'erase-ai' && layer.rect)
+    if (aiLayers.length === 0) {
+      showToast('请先生成智能修复选区', 'info')
+      return
+    }
+
+    setIsSmartErasing(true)
+    setSmartEraseError(null)
+    setSmartEraseStage(null)
+    try {
+      // The snapshot fed to the model must not contain the marquee outlines,
+      // so 'erase-ai' layers are stripped; the mask itself is drawn from the
+      // unstripped state through the same transform pipeline.
+      const cleanState: typeof state = {
+        ...state,
+        annotations: (state.annotations ?? []).filter((layer) => layer.type !== 'erase-ai'),
+      }
+      const snapshot = await exportEditor(decodedSource, cleanState, factory, 'image/png', 1)
+      const bitmap = await createImageBitmap(snapshot)
+      const { width, height } = bitmap
+
+      const makeCanvas = () => factory.create(width, height)
+      const ctxOf = (canvas: ReturnType<typeof factory.create>) =>
+        canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+
+      const imageCanvas = makeCanvas()
+      ctxOf(imageCanvas).drawImage(bitmap, 0, 0)
+      bitmap.close()
+      const imageData = ctxOf(imageCanvas).getImageData(0, 0, width, height)
+
+      // Model mask: crisp white-on-black regions.
+      const maskCanvas = makeCanvas()
+      const maskCtx = ctxOf(maskCanvas)
+      maskCtx.fillStyle = '#000000'
+      maskCtx.fillRect(0, 0, width, height)
+      drawEraseAiMask(maskCtx, state, width, height, 1)
+      const maskData = maskCtx.getImageData(0, 0, width, height)
+
+      // Composite alpha: the same regions blurred twice so the interior stays
+      // fully generated while edges feather into untouched pixels. Where the
+      // platform lacks canvas filters this degrades to a crisp edge.
+      const alphaCanvas = makeCanvas()
+      const alphaCtx = ctxOf(alphaCanvas)
+      alphaCtx.fillStyle = '#000000'
+      alphaCtx.fillRect(0, 0, width, height)
+      alphaCtx.filter = 'blur(3px)'
+      drawEraseAiMask(alphaCtx, state, width, height, 1)
+      drawEraseAiMask(alphaCtx, state, width, height, 1)
+      const alphaData = alphaCtx.getImageData(0, 0, width, height)
+
+      const result = await runSmartErase(
+        { image: imageData, mask: maskData, composite: alphaData },
+        (stage) =>
+          setSmartEraseStage({
+            phase: stage.phase,
+            loadedBytes: stage.phase === 'model' ? stage.loadedBytes : undefined,
+            totalBytes: stage.phase === 'model' ? stage.totalBytes : undefined,
+          })
+      )
+
+      const outCanvas = makeCanvas()
+      ctxOf(outCanvas).putImageData(result, 0, 0)
+      const outCanvasAny = outCanvas as unknown as {
+        convertToBlob?: (options?: { type: string }) => Promise<Blob>
+        toBlob?: (callback: (blob: Blob | null) => void, type?: string) => void
+      }
+      const blob = outCanvasAny.convertToBlob
+        ? await outCanvasAny.convertToBlob({ type: 'image/png' })
+        : await new Promise<Blob>((resolve, reject) =>
+            outCanvasAny.toBlob?.((b) => (b ? resolve(b) : reject(new Error('修复结果导出失败'))), 'image/png')
+          )
+
+      const baseName = file.name.replace(/\.[^/.]+$/, '')
+      const resultFile = new File([blob], `${baseName}_smart-erased.png`, { type: 'image/png' })
+      const opened = await documentSwitcher.openDocument(resultFile, (decoded) => ({
+        docId: createDraftId(),
+        file: resultFile,
+        state: createEditorState(decoded.width, decoded.height),
+      }))
+      if (opened) {
+        showToast(`智能修复完成：${aiLayers.length} 个区域已合成，掩膜外像素未改动`, 'success')
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setSmartEraseError(message)
+      showToast(`智能修复失败：${message}`, 'error')
+    } finally {
+      setIsSmartErasing(false)
+      setSmartEraseStage(null)
+    }
+  }, [decodedSource, file, factory, documentSwitcher, showToast])
 
   const handleCheckProvenanceTarget = useCallback(
     async (target: 'current' | 'original') => {
@@ -1179,6 +1298,11 @@ export function App() {
             onAddWatermark={handleAddWatermark}
             onAddEraseRegion={handleAddEraseRegion}
             onCheckProvenanceTarget={handleCheckProvenanceTarget}
+            hasEraseAiRegions={hasEraseAiRegions}
+            onRunSmartErase={() => void handleRunSmartErase()}
+            isSmartErasing={isSmartErasing}
+            smartEraseStage={smartEraseStage}
+            smartEraseError={smartEraseError}
             provenanceResultDetail={provenanceResultDetail}
             provenanceError={provenanceError}
             outputMime={outputMime}

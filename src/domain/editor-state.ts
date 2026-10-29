@@ -10,7 +10,7 @@ export interface Point {
   y: number
 }
 
-export type AnnotationType = 'brush' | 'highlighter' | 'arrow' | 'rect' | 'ellipse' | 'mosaic' | 'text' | 'watermark'
+export type AnnotationType = 'brush' | 'highlighter' | 'arrow' | 'rect' | 'ellipse' | 'mosaic' | 'text' | 'watermark' | 'erase-ai'
 export type TextBgStyle = 'none' | 'translucent' | 'solid'
 export type WatermarkStyle = 'tile' | 'corner'
 
