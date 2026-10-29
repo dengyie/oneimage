@@ -13,6 +13,8 @@ import { initDatabase } from './db'
 import { registerAuthRoutes } from './auth-routes'
 import { registerProjectRoutes } from './project-routes'
 import { createOneMailMailer } from './onemail'
+import { loadImagegenConfig } from './imagegen-config'
+import { registerImagegenRoutes } from './imagegen-route'
 
 async function main(): Promise<void> {
   // state_json carries the full serialized editor state (stroke point arrays
@@ -29,6 +31,14 @@ async function main(): Promise<void> {
   const authRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 10, maxTrackedClients: 10_000 })
   const projectsRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 60, maxTrackedClients: 10_000 })
   const allowDevelopmentOrigin = process.env.NODE_ENV === 'development'
+
+  // Image generation providers (baseUrl + key stay server-side; the browser
+  // only ever sees names and model lists). Unconfigured or invalid config
+  // degrades to a 503 imagegen surface instead of blocking startup.
+  const imagegenConfig = loadImagegenConfig()
+  for (const warning of imagegenConfig.warnings) {
+    app.log.warn(warning)
+  }
 
   // Initialize SQLite Database
   const appDb = initDatabase()
@@ -50,6 +60,15 @@ async function main(): Promise<void> {
   registerSameOriginGuard(app)
   registerAuthRoutes(app, appDb.db, { rateLimiter: authRateLimiter, mailer: verificationMailer })
   registerProjectRoutes(app, appDb.db, { rateLimiter: projectsRateLimiter })
+  // Generation is the most expensive public surface on the site: a tight
+  // per-client window plus the durable daily cap inside the route.
+  const rawDailyCap = Number(process.env.ONEIMAGE_IMAGEGEN_DAILY_CAP ?? 20)
+  const imagegenRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 6, maxTrackedClients: 10_000 })
+  registerImagegenRoutes(app, appDb.db, {
+    providers: imagegenConfig.providers,
+    rateLimiter: imagegenRateLimiter,
+    dailyCap: Number.isFinite(rawDailyCap) && rawDailyCap >= 1 ? Math.floor(rawDailyCap) : 20,
+  })
   registerProvenanceRoute(
     app,
     (file, filename, signal) => new OpenAIProvenanceAdapter({ apiKey: process.env.OPENAI_API_KEY ?? '' }).check(file, filename, signal),

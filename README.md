@@ -9,6 +9,7 @@ OneImage is a local-first image workbench. P0 tools run in the browser and do no
 - Provider boundary: `OpenAIProvenanceAdapter` maps C2PA and SynthID evidence independently.
 - Server boundary: `POST /api/v1/provenance/openai` accepts one bounded multipart image, streams it through a private temporary file, and keeps `OPENAI_API_KEY` server-side.
 - Operations boundary: `GET /healthz` returns `200` when the provider is configured and `503` degraded status otherwise, without exposing secrets. It checks configuration, not upstream connectivity.
+- AI image generation (text-to-image): server-side provider adapters (`openai-images` for OpenAI `gpt-image-*` / xAI `grok-2-image*` / OpenAI-compatible aggregators, `gemini` for direct Google `generateContent`). Providers are configured only on the server via `ONEIMAGE_IMAGE_PROVIDERS_FILE` (or inline `ONEIMAGE_IMAGE_PROVIDERS` JSON) with `baseUrl`, `apiKey` and the model list; the browser sees provider names and models through `GET /api/v1/imagegen/capabilities` and never a key or URL. `POST /api/v1/imagegen` is rate-limited per client and bounded by a durable daily cap (`ONEIMAGE_IMAGEGEN_DAILY_CAP`, default 20/day per client). Results land in the workbench for further editing.
 - UI: responsive workbench with local preview, drag-and-drop input, cancellation, export, and privacy status.
 
 OCR, segmentation, upscaling, invisible watermark operations, and remote inpainting remain gated behind the validation probes in the project development document. They are not represented as silently working features.

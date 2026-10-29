@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest'
+import { loadImagegenConfig } from '../server/imagegen-config'
+
+const VALID_PROVIDER = {
+  id: 'mangoapi',
+  name: 'MangoApi 聚合',
+  type: 'openai-images',
+  baseUrl: 'https://api.example.com/v1',
+  apiKey: 'sk-test',
+  models: ['gpt-image-1', 'grok-2-image-1212'],
+}
+
+describe('imagegen config loader', () => {
+  it('returns an empty provider list with no warnings when nothing is set', () => {
+    const result = loadImagegenConfig({})
+    expect(result.providers).toEqual([])
+    expect(result.warnings).toEqual([])
+  })
+
+  it('parses inline JSON and fills defaults', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({ providers: [VALID_PROVIDER] }),
+    })
+    expect(result.warnings).toEqual([])
+    expect(result.providers).toHaveLength(1)
+    const provider = result.providers[0]
+    expect(provider.type).toBe('openai-images')
+    expect(provider.defaultModel).toBe('gpt-image-1')
+    expect(provider.timeoutMs).toBe(90_000)
+    expect(provider.sizes).toBeUndefined()
+  })
+
+  it('reads from the config file env when set', () => {
+    const result = loadImagegenConfig({ ONEIMAGE_IMAGE_PROVIDERS_FILE: 'nonexistent/imagegen.json' })
+    expect(result.providers).toEqual([])
+    expect(result.warnings[0]).toContain('could not be read')
+  })
+
+  it('degrades gracefully on invalid JSON', () => {
+    const result = loadImagegenConfig({ ONEIMAGE_IMAGE_PROVIDERS: '{not json' })
+    expect(result.providers).toEqual([])
+    expect(result.warnings[0]).toContain('not valid JSON')
+  })
+
+  it('skips invalid providers and keeps valid ones', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({
+        providers: [
+          VALID_PROVIDER,
+          { ...VALID_PROVIDER, id: 'bad type id' }, // id with space
+          { ...VALID_PROVIDER, id: 'nokey', apiKey: '' },
+          { ...VALID_PROVIDER, id: 'badtype', type: 'midjourney' },
+          { ...VALID_PROVIDER, id: 'nourl', baseUrl: 'api.example.com/v1' },
+          { ...VALID_PROVIDER, id: 'nomodels', models: [] },
+          VALID_PROVIDER, // duplicate id
+        ],
+      }),
+    })
+    expect(result.providers.map((p) => p.id)).toEqual(['mangoapi'])
+    expect(result.warnings.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('clamps the upstream timeout under the Cloudflare edge limit', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({
+        providers: [{ ...VALID_PROVIDER, timeoutMs: 120_000 }],
+      }),
+    })
+    expect(result.providers[0].timeoutMs).toBeLessThanOrEqual(95_000)
+    expect(result.warnings).toEqual([]) // accepted range is up to 180s, clamp is silent
+  })
+
+  it('rejects a defaultModel outside the model list and falls back', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({
+        providers: [{ ...VALID_PROVIDER, defaultModel: 'not-in-list' }],
+      }),
+    })
+    expect(result.providers[0].defaultModel).toBe('gpt-image-1')
+    expect(result.warnings[0]).toContain('defaultModel not in models')
+  })
+
+  it('keeps a gemini generationConfig object passthrough', () => {
+    const result = loadImagegenConfig({
+      ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({
+        providers: [{
+          ...VALID_PROVIDER,
+          id: 'google',
+          type: 'gemini',
+          models: ['gemini-2.5-flash-image'],
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+        }],
+      }),
+    })
+    expect(result.providers[0].generationConfig).toEqual({ responseModalities: ['TEXT', 'IMAGE'] })
+  })
+})

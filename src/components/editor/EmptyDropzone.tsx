@@ -15,6 +15,8 @@ interface EmptyDropzoneProps {
   recentItems?: RecentItemPreview[]
   onSelectRecent?: (id: string) => void
   onViewAllHistory?: () => void
+  /** Present only when the server exposes imagegen providers. */
+  onOpenImageGen?: () => void
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -31,6 +33,7 @@ export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({
   recentItems = [],
   onSelectRecent,
   onViewAllHistory,
+  onOpenImageGen,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -118,6 +121,16 @@ export const EmptyDropzone: React.FC<EmptyDropzoneProps> = ({
           </div>
         )}
       </div>
+
+      {onOpenImageGen && (
+        <button
+          onClick={onOpenImageGen}
+          className="mt-5 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 hover:bg-emerald-900/50 hover:border-emerald-400/50 transition-all"
+        >
+          <UiIcon name="sparkles" size={14} />
+          没有素材？用 AI 生成一张
+        </button>
+      )}
 
       {/* Recent Projects Shelf */}
       {recentItems.length > 0 && (
