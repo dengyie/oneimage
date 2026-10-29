@@ -24,6 +24,8 @@ interface TopActionBarProps {
   onQuickExport: () => void
   onExportFormat: (mime: string) => void
   onCopyToClipboard: () => void
+  /** Present only when the server exposes imagegen providers. */
+  onOpenImageGen?: () => void
 }
 
 export const TopActionBar: React.FC<TopActionBarProps> = ({
@@ -48,6 +50,7 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
   onQuickExport,
   onExportFormat,
   onCopyToClipboard,
+  onOpenImageGen,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -87,6 +90,15 @@ export const TopActionBar: React.FC<TopActionBarProps> = ({
 
       {/* History buttons */}
       <div className="flex shrink-0 items-center gap-0.5">
+        {onOpenImageGen && (
+          <button
+            onClick={onOpenImageGen}
+            title="AI 生图"
+            className="p-1.5 rounded-full hover:bg-zinc-800 text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            <UiIcon name="sparkles" size={15} />
+          </button>
+        )}
         <button
           onClick={onUndo}
           disabled={!canUndo}

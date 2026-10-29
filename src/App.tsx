@@ -42,6 +42,8 @@ import { PointerRipples } from './components/ui/PointerRipples'
 import { UserNavCapsule } from './components/navigation/UserNavCapsule'
 import { AuthModal } from './components/auth/AuthModal'
 import { ProfileModal } from './components/auth/ProfileModal'
+import { ImageGenModal } from './components/imagegen/ImageGenModal'
+import { fetchImagegenCapabilities } from './infrastructure/imagegen-client'
 import { HistoryDrawer, type UnifiedHistoryItem } from './components/history/HistoryDrawer'
 import {
   fetchCurrentUser,
@@ -107,6 +109,10 @@ export function App() {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false)
+  // Image generation: enabled is driven by the server capabilities endpoint,
+  // so the entry buttons stay hidden until the operator configures providers.
+  const [showImageGenModal, setShowImageGenModal] = useState(false)
+  const [imagegenEnabled, setImagegenEnabled] = useState(false)
 
   // History & Storage State
   const [localHistoryItems, setLocalHistoryItems] = useState<LocalHistoryItem[]>([])
@@ -205,6 +211,18 @@ export function App() {
   useEffect(() => {
     void refreshHistory()
   }, [refreshHistory])
+
+  // One-shot imagegen capability probe on mount; the server returns 503 with
+  // imagegen_unconfigured until the operator fills the providers config.
+  useEffect(() => {
+    let cancelled = false
+    void fetchImagegenCapabilities().then((caps) => {
+      if (!cancelled) setImagegenEnabled(Boolean(caps?.enabled && caps.providers.length > 0))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Visible editor state: live gesture output wins over the committed snapshot.
   const currentState = sessionState(session)
@@ -1070,6 +1088,7 @@ export function App() {
             fileSize={file.size}
             dimensions={{ width: decodedSource.width, height: decodedSource.height }}
             zoomPercent={Math.round(zoomScale * 100)}
+            onOpenImageGen={imagegenEnabled ? () => setShowImageGenModal(true) : undefined}
             canUndo={canUndoSession(session)}
             canRedo={canRedoSession(session)}
             canReset={canUndoSession(session) || Boolean(session.draft)}
@@ -1180,6 +1199,7 @@ export function App() {
         <EmptyDropzone
           onFileSelect={loadFile}
           error={errorMessage}
+          onOpenImageGen={imagegenEnabled ? () => setShowImageGenModal(true) : undefined}
           recentItems={localHistoryItems.map((item) => ({
             id: item.id,
             title: item.title,
@@ -1225,6 +1245,17 @@ export function App() {
           flushPendingPersist()
           setShowHistoryDrawer(false)
           setShowAuthModal(true)
+        }}
+      />
+
+      {/* AI Image Generation Modal */}
+      <ImageGenModal
+        isOpen={showImageGenModal}
+        onClose={() => setShowImageGenModal(false)}
+        onGenerated={(file, model) => {
+          setShowImageGenModal(false)
+          void loadFile(file)
+          showToast(`AI 生成完成（${model}），已进入工作台`, 'success')
         }}
       />
 
