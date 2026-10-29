@@ -36,6 +36,14 @@ function createWorker(): Worker {
   return new Worker(new URL('./inpaint-worker.ts', import.meta.url), { type: 'module' })
 }
 
+// crypto.randomUUID is secure-context-only; the fallback keeps LAN/plain-http
+// deployments working.
+function makeRunId(): string {
+  const c = globalThis.crypto as Crypto | undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 let worker: WorkerLike | null = null
 
 function getWorker(): WorkerLike {
@@ -58,7 +66,7 @@ export function runSmartErase(
   options: { workerFactory?: () => WorkerLike } = {}
 ): Promise<ImageData> {
   const { width, height } = input.image
-  const runId = crypto.randomUUID()
+  const runId = makeRunId()
   const transfers: ArrayBuffer[] = [input.image.data.buffer, input.mask.data.buffer, input.composite.data.buffer]
 
   return new Promise<ImageData>((resolve, reject) => {

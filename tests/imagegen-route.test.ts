@@ -311,3 +311,64 @@ describe('imagegen routes', () => {
     appDb.close()
   })
 })
+
+describe('imagegen url host guard (IPv6 and false positives)', () => {
+  const png = () => new Response(new Uint8Array(8), { status: 200, headers: { 'content-type': 'image/png' } })
+
+  function makeApp(upstreamUrls: string[]) {
+    let generationCall = 0
+    const seen: { url: string; auth: string | undefined }[] = []
+    const fetchImpl = vi.fn().mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url)
+      if (target.endsWith('/images/generations')) {
+        const itemUrl = upstreamUrls[generationCall++] ?? ''
+        return new Response(JSON.stringify({ data: [{ url: itemUrl }] }), { status: 200 })
+      }
+      seen.push({
+        url: target,
+        auth: init?.headers ? ((init.headers as Record<string, string>).Authorization as string | undefined) : undefined,
+      })
+      return png()
+    })
+    const app = Fastify()
+    const appDb = initDatabase(':memory:')
+    registerImagegenRoutes(app, appDb.db, {
+      providers: [provider({ baseUrl: 'https://fcdn.example/v1' })],
+      dailyCap: 50,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    return { app, appDb, seen }
+  }
+
+  it('rejects IPv6 private literals (bracketed + URL-normalized hex mapped v4)', async () => {
+    const { app, appDb, seen } = makeApp([
+      'https://[::1]/x.png',
+      'https://[::ffff:127.0.0.1]/x.png',
+      'https://[::ffff:7f00:1]/x.png',
+    ])
+    for (let i = 0; i < 3; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/imagegen',
+        payload: { provider: 'test', model: 'img-model-1', prompt: 'p' },
+      })
+      expect(res.statusCode, `case ${i}`).toBe(502)
+      expect(JSON.parse(res.body).message).toContain('内网/回环')
+    }
+    // None of the private hosts may actually be fetched.
+    expect(seen.filter((s) => s.url.includes('['))).toHaveLength(0)
+    appDb.close()
+  })
+
+  it('does not flag public domains that merely start with fc/fd, and keeps same-host auth', async () => {
+    const { app, appDb, seen } = makeApp(['https://fcdn.example/out.png'])
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/imagegen',
+      payload: { provider: 'test', model: 'img-model-1', prompt: 'p' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(seen).toEqual([{ url: 'https://fcdn.example/out.png', auth: 'Bearer sk-test' }])
+    appDb.close()
+  })
+})

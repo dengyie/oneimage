@@ -1372,10 +1372,25 @@ export function App() {
       <ImageGenModal
         isOpen={showImageGenModal}
         onClose={() => setShowImageGenModal(false)}
-        onGenerated={(file, model) => {
+        onGenerated={(files, model) => {
           setShowImageGenModal(false)
-          void loadFile(file)
-          showToast(`AI 生成完成（${model}），已进入工作台`, 'success')
+          void (async () => {
+            // Each opened image pushes the previous one into the undo tree,
+            // so a multi-image batch stays fully walkable.
+            for (const file of files) {
+              await documentSwitcher.openDocument(file, (decoded) => ({
+                docId: createDraftId(),
+                file,
+                state: createEditorState(decoded.width, decoded.height),
+              }))
+            }
+            showToast(
+              files.length > 1
+                ? `AI 生成完成（${model}）：${files.length} 张已入历史，当前显示最后一张`
+                : `AI 生成完成（${model}），已进入工作台`,
+              'success'
+            )
+          })()
         }}
       />
 

@@ -10,8 +10,8 @@ import {
 interface ImageGenModalProps {
   isOpen: boolean
   onClose: () => void
-  /** Called once per generated image; the App feeds the File into loadFile. */
-  onGenerated: (file: File, model: string) => void
+  /** Called once per generation with every produced image; the App loads them. */
+  onGenerated: (files: File[], model: string) => void
 }
 
 export const ImageGenModal: React.FC<ImageGenModalProps> = ({ isOpen, onClose, onGenerated }) => {
@@ -88,12 +88,9 @@ export const ImageGenModal: React.FC<ImageGenModalProps> = ({ isOpen, onClose, o
       setError('上游没有返回图片')
       return
     }
-    // Multi-image generations open the first one and queue the rest through
-    // the same callback; the App loads them sequentially.
-    onGenerated(files[0], result.data.model)
-    for (let i = 1; i < files.length; i++) {
-      window.setTimeout(() => onGenerated(files[i], result.data!.model), i * 400)
-    }
+    // One callback for the whole batch: loading N images is the App's job,
+    // and a modal-driven setTimeout chain would race the document switcher.
+    onGenerated(files, result.data.model)
   }
 
   return (

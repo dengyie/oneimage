@@ -36,22 +36,40 @@ async function fetchWithProgress(
   if (!response.ok || !response.body) return response
   const totalHeader = response.headers.get('content-length')
   const total = totalHeader ? Number(totalHeader) : null
-  if (!onProgress || !Number.isFinite(total) || total === 0) return response
+  if (!onProgress || total === null || !Number.isFinite(total) || total === 0) return response
 
+  // When the upstream declares its size, read straight into one preallocated
+  // buffer instead of collecting chunks and re-wrapping them in a Blob — for
+  // the 27 MB model that avoids two extra transient copies.
+  const totalBytes = total
+  const out = new Uint8Array(totalBytes)
+  let offset = 0
   const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let loaded = 0
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    chunks.push(value)
-    loaded += value.byteLength
-    onProgress({ phase: 'download', loadedBytes: loaded, totalBytes: total })
+    if (offset + value.byteLength > totalBytes) {
+      // Upstream lied about its size; fall back to the chunked path.
+      const rest: Uint8Array[] = [out.subarray(0, offset), value]
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) break
+        rest.push(next.value)
+        offset += next.value.byteLength
+      }
+      return new Response(new Blob(rest as BlobPart[]), {
+        status: response.status,
+        headers: response.headers,
+      })
+    }
+    out.set(value, offset)
+    offset += value.byteLength
+    onProgress({ phase: 'download', loadedBytes: offset, totalBytes })
   }
-  return new Response(new Blob(chunks as BlobPart[]), {
-    status: response.status,
-    headers: response.headers,
-  })
+  if (offset !== totalBytes) {
+    return new Response(out.subarray(0, offset), { status: response.status, headers: response.headers })
+  }
+  return new Response(out, { status: response.status, headers: response.headers })
 }
 
 /**
@@ -100,7 +118,9 @@ export async function ensureMiganModel(
 
   const buffer = await response.arrayBuffer()
   if (cache) {
-    await cache.put(servedFrom, new Response(buffer.slice(0))).catch(() => undefined)
+    // Response(ArrayBuffer) copies internally; the source buffer stays usable,
+    // so no defensive slice is needed here.
+    await cache.put(servedFrom, new Response(buffer)).catch(() => undefined)
   }
   return buffer
 }
