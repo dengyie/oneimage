@@ -5,7 +5,7 @@ import Fastify from 'fastify'
 import { initDatabase } from '../server/db'
 import { registerAuthRoutes } from '../server/auth-routes'
 import { createRateLimiter } from '../server/rate-limit'
-import { createFakeMailer, registerViaEmailCode, type FakeMailer } from './helpers'
+import { createFakeMailer, registerViaEmailCode, sessionTokenFrom, type FakeMailer } from './helpers'
 
 describe('Auth routes', () => {
   function createTestApp(options?: Parameters<typeof registerAuthRoutes>[2]): { app: ReturnType<typeof Fastify>; appDb: { db: DatabaseSync; close: () => void }; mailer: FakeMailer } {
@@ -31,7 +31,9 @@ describe('Auth routes', () => {
     expect(data.user.username).toBe('alice')
     expect(data.user.email).toBe('alice@example.com')
     expect(data.user.nickname).toBe('Alice Walker')
-    expect(data.sessionToken).toBeDefined()
+    // The session token must ride the HttpOnly cookie only, never the body.
+    expect(data.sessionToken).toBeUndefined()
+    const sessionToken = sessionTokenFrom(res)
 
     const cookie = String(res.headers['set-cookie'])
     expect(cookie).toContain('oneimage_session=')
@@ -41,8 +43,8 @@ describe('Auth routes', () => {
 
     // Only the SHA-256 digest of the token may exist at rest.
     const stored = appDb.db.prepare('SELECT token FROM sessions LIMIT 1').get() as { token: string }
-    expect(stored.token).toBe(createHash('sha256').update(data.sessionToken).digest('hex'))
-    expect(stored.token).not.toBe(data.sessionToken)
+    expect(stored.token).toBe(createHash('sha256').update(sessionToken).digest('hex'))
+    expect(stored.token).not.toBe(sessionToken)
 
     appDb.close()
   })
@@ -75,7 +77,7 @@ describe('Auth routes', () => {
     const cases = [
       { payload: { username: 'ab', email: 'ab@example.com', password: 'password123' }, error: 'invalid_username' },
       { payload: { username: 'abc', email: 'not-an-email', password: 'password123' }, error: 'invalid_email' },
-      { payload: { username: 'abc', email: 'abc@example.com', password: '12345' }, error: 'invalid_password' },
+      { payload: { username: 'abc', email: 'abc@example.com', password: '1234567' }, error: 'invalid_password' },
       { payload: { email: 'abc@example.com', password: 'password123' }, error: 'missing_fields' },
       { payload: { username: 'abc', email: 'abc@example.com', password: 'password123' }, error: 'email_code_required' },
     ]
@@ -131,7 +133,8 @@ describe('Auth routes', () => {
     expect(okRes.statusCode).toBe(200)
     const okData = JSON.parse(okRes.body)
     expect(okData.user.username).toBe('charlie')
-    expect(okData.sessionToken).toBeDefined()
+    expect(okData.sessionToken).toBeUndefined()
+    expect(sessionTokenFrom(okRes)).toBeDefined()
 
     // Success login by email
     const emailRes = await app.inject({
@@ -198,7 +201,7 @@ describe('Auth routes', () => {
     const regRes = await registerViaEmailCode(app, appDb.db, mailer, {
       username: 'expiree', email: 'expire@example.com', password: 'password123',
     })
-    const { sessionToken } = JSON.parse(regRes.body)
+    const sessionToken = sessionTokenFrom(regRes)
 
     // Plant an expired session for a second token.
     const expiredHash = createHash('sha256').update('expired-token').digest('hex')
@@ -240,7 +243,7 @@ describe('Auth routes', () => {
     const regRes = await registerViaEmailCode(app, appDb.db, mailer, {
       username: 'styler', email: 'style@example.com', password: 'password123',
     })
-    const token = JSON.parse(regRes.body).sessionToken
+    const token = sessionTokenFrom(regRes)
 
     const noToken = await app.inject({ method: 'PATCH', url: '/api/v1/auth/profile', payload: { nickname: 'x' } })
     expect(noToken.statusCode).toBe(401)
@@ -286,7 +289,7 @@ describe('Auth routes', () => {
       email: 'david@example.com',
       password: 'password123',
     })
-    const { sessionToken } = JSON.parse(regRes.body)
+    const sessionToken = sessionTokenFrom(regRes)
 
     // Authenticated call via Bearer header
     const authRes = await app.inject({

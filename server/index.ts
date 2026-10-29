@@ -8,6 +8,7 @@ import { authorizeProvenanceRequest } from './security'
 import { registerHealthRoute } from './health-route'
 import { configureOutboundProxy } from './proxy'
 import { createRateLimiter } from './rate-limit'
+import { registerSameOriginGuard } from './origin'
 import { initDatabase } from './db'
 import { registerAuthRoutes } from './auth-routes'
 import { registerProjectRoutes } from './project-routes'
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
 
   registerHealthRoute(app, { providerConfigured: Boolean(process.env.OPENAI_API_KEY) })
   registerCapabilitiesRoute(app, { provenance: { enabled: Boolean(process.env.OPENAI_API_KEY), provider: process.env.OPENAI_API_KEY ? 'openai' : null, maxInputBytes } })
+  registerSameOriginGuard(app)
   registerAuthRoutes(app, appDb.db, { rateLimiter: authRateLimiter, mailer: verificationMailer })
   registerProjectRoutes(app, appDb.db, { rateLimiter: projectsRateLimiter })
   registerProvenanceRoute(

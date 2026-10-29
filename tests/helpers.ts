@@ -47,3 +47,11 @@ export async function registerViaEmailCode(
     },
   })
 }
+
+// Register/login no longer echo the session token in the JSON body; the token
+// rides the HttpOnly cookie only. Tests read it back from the response cookie.
+export function sessionTokenFrom(res: { cookies: { name: string; value: string }[] }): string {
+  const cookie = res.cookies.find((entry) => entry.name === 'oneimage_session')
+  if (!cookie) throw new Error('no oneimage_session cookie on response')
+  return cookie.value
+}

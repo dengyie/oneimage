@@ -73,7 +73,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
   // Request a registration verification code. Gated three ways: the shared
   // per-client limiter, a per-email resend cooldown, and a per-email hourly
   // cap (both durable in SQLite) so a third party cannot mail-bomb an
-  // arbitrary inbox through this endpoint.
+  // arbitrary inbox through this endpoint. The code row is written only after
+  // the mailer succeeds, so a transient delivery failure leaves any previous
+  // still-valid code intact and consumes none of the send budget.
+  const inFlightEmailCodes = new Set<string>()
   app.post('/api/v1/auth/email-code', async (request: FastifyRequest<{
     Body: { email?: string }
   }>, reply: FastifyReply) => {
@@ -104,16 +107,30 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       })
     }
 
-    const code = generateEmailCode()
-    storeEmailCode(db, email, code)
+    // The send is awaited, so the durable gate alone cannot serialise
+    // concurrent requests for one address; the in-flight mark closes that gap
+    // within this process. The set is touched synchronously before the first
+    // await, making the check-and-mark atomic per event-loop turn.
+    if (inFlightEmailCodes.has(email)) {
+      return reply.status(429).send({
+        error: 'email_code_throttled',
+        reason: 'cooldown',
+        message: '验证码正在发送，请稍候',
+      })
+    }
+    inFlightEmailCodes.add(email)
     try {
+      const code = generateEmailCode()
       await mailer.sendVerificationCode(email, code)
+      storeEmailCode(db, email, code)
     } catch (err: any) {
       request.log.error({ err }, 'Failed to send verification email')
       return reply.status(503).send({
         error: 'mail_send_failed',
         message: '验证码邮件发送失败，请稍后重试',
       })
+    } finally {
+      inFlightEmailCodes.delete(email)
     }
     return reply.status(200).send({ ok: true, resendAfterSeconds: 60 })
   })
@@ -149,10 +166,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       })
     }
 
-    if (password.length < 6 || password.length > 128) {
+    if (password.length < 8 || password.length > 128) {
       return reply.status(400).send({
         error: 'invalid_password',
-        message: '密码长度需在 6-128 位之间',
+        message: '密码长度需在 8-128 位之间',
       })
     }
 
@@ -186,7 +203,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
     }
 
     try {
-      const user = createUser(db, {
+      const user = await createUser(db, {
         username: cleanUsername,
         email: cleanEmail,
         password,
@@ -196,11 +213,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       purgeStaleEmailCodes(db)
       const session = createSession(db, user.id)
 
+      // The token rides only the HttpOnly cookie; echoing it in the JSON body
+      // would hand a usable credential to any script running on the page.
       setSessionCookie(reply, session.token)
-      return reply.status(201).send({
-        user,
-        sessionToken: session.token,
-      })
+      return reply.status(201).send({ user })
     } catch (err: any) {
       if (err?.message?.includes('UNIQUE constraint failed')) {
         return reply.status(409).send({
@@ -228,7 +244,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
       })
     }
 
-    const user = authenticateUser(db, account, password)
+    const user = await authenticateUser(db, account, password)
     if (!user) {
       return reply.status(401).send({
         error: 'invalid_credentials',
@@ -240,10 +256,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: DatabaseSync, optio
     purgeStaleEmailCodes(db)
     const session = createSession(db, user.id)
     setSessionCookie(reply, session.token)
-    return reply.status(200).send({
-      user,
-      sessionToken: session.token,
-    })
+    return reply.status(200).send({ user })
   })
 
   // Logout
