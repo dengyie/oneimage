@@ -218,16 +218,18 @@ export function App() {
     void refreshHistory()
   }, [refreshHistory])
 
-  // One-shot imagegen capability probe on mount; the server returns 503 with
-  // imagegen_unconfigured until the operator fills the providers config.
+  // Imagegen capability probe: on mount and again whenever the window gains
+  // focus, so visitors with the page already open see the entry buttons as
+  // soon as the operator configures providers (no reload needed).
   useEffect(() => {
-    let cancelled = false
-    void fetchImagegenCapabilities().then((caps) => {
-      if (!cancelled) setImagegenEnabled(Boolean(caps?.enabled && caps.providers.length > 0))
-    })
-    return () => {
-      cancelled = true
+    const probe = () => {
+      void fetchImagegenCapabilities().then((caps) => {
+        setImagegenEnabled(Boolean(caps?.enabled && caps.providers.length > 0))
+      })
     }
+    probe()
+    window.addEventListener('focus', probe)
+    return () => window.removeEventListener('focus', probe)
   }, [])
 
   // Visible editor state: live gesture output wins over the committed snapshot.
