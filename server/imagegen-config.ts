@@ -148,6 +148,9 @@ export function loadImagegenConfig(env: NodeJS.ProcessEnv = process.env): Imageg
   const filePath = env[IMAGEGEN_CONFIG_FILE_ENV]
   const inline = env[IMAGEGEN_CONFIG_ENV]
   if (filePath) {
+    if (inline) {
+      warnings.push(`both ${IMAGEGEN_CONFIG_FILE_ENV} and ${IMAGEGEN_CONFIG_ENV} are set; the file wins`)
+    }
     try {
       const text = readFileSync(filePath, 'utf8')
       return { providers: parseConfigText(text, `file ${filePath}`, warnings), warnings }

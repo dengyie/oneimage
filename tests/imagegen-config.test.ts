@@ -107,3 +107,18 @@ describe('imagegen config warnings', () => {
     expect(result.warnings[0]).toContain('只对 gemini 类型生效')
   })
 })
+
+it('warns when both the file and inline config env are set (file wins)', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = await mkdtemp(join(tmpdir(), 'oneimage-cfg-'))
+  const file = join(dir, 'imagegen.json')
+  await writeFile(file, JSON.stringify({ providers: [VALID_PROVIDER] }))
+  const result = loadImagegenConfig({
+    ONEIMAGE_IMAGE_PROVIDERS_FILE: file,
+    ONEIMAGE_IMAGE_PROVIDERS: JSON.stringify({ providers: [] }),
+  })
+  expect(result.providers).toHaveLength(1)
+  expect(result.warnings.some((w) => w.includes('the file wins'))).toBe(true)
+})

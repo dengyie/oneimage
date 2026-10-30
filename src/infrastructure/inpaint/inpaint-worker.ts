@@ -56,6 +56,9 @@ export type SmartEraseResponse =
 let ortPromise: Promise<OrtNamespace> | null = null
 let session: OrtSession | null = null
 let sessionCreation: Promise<OrtSession> | null = null
+// True while the live session was created with WebGPU attempted; only such
+// sessions are worth rebuilding on WASM after a run-time failure.
+let usedWebgpu = false
 
 function loadOrt(): Promise<OrtNamespace> {
   if (!ortPromise) {
@@ -64,7 +67,7 @@ function loadOrt(): Promise<OrtNamespace> {
   return ortPromise
 }
 
-async function createSession(runId: string): Promise<OrtSession> {
+async function createSession(runId: string, forceWasm = false): Promise<OrtSession> {
   const ort = await loadOrt()
   // Threads need cross-origin isolation; without COOP/COEP keep single-thread
   // SIMD so ORT does not stall on a missing SharedArrayBuffer.
@@ -84,22 +87,26 @@ async function createSession(runId: string): Promise<OrtSession> {
     } satisfies SmartEraseResponse)
   })
   const gpu = typeof navigator !== 'undefined' && 'gpu' in navigator
+  usedWebgpu = gpu && !forceWasm
   try {
-    return await ort.InferenceSession.create(model, { executionProviders: gpu ? ['webgpu', 'wasm'] : ['wasm'] })
+    return await ort.InferenceSession.create(model, {
+      executionProviders: usedWebgpu ? ['webgpu', 'wasm'] : ['wasm'],
+    })
   } catch (err) {
-    if (gpu) {
+    if (usedWebgpu) {
       // WebGPU present but the model/adapter rejected it (driver, OOM,
       // unsupported ops): fall back to WASM instead of failing the run.
+      usedWebgpu = false
       return ort.InferenceSession.create(model, { executionProviders: ['wasm'] })
     }
     throw err
   }
 }
 
-async function getSession(runId: string): Promise<OrtSession> {
+async function getSession(runId: string, forceWasm = false): Promise<OrtSession> {
   if (session) return session
   if (!sessionCreation) {
-    sessionCreation = createSession(runId)
+    sessionCreation = createSession(runId, forceWasm)
       .then((created) => {
         session = created
         return created
@@ -110,6 +117,14 @@ async function getSession(runId: string): Promise<OrtSession> {
       })
   }
   return sessionCreation
+}
+
+// A WebGPU session can create cleanly yet still fail at run time (device
+// loss, driver quirks, per-tile OOM). Rebuild once on WASM and retry.
+async function rebuildSessionOnWasm(runId: string): Promise<OrtSession> {
+  session = null
+  sessionCreation = null
+  return getSession(runId, true)
 }
 
 // Omit over a union collapses to the shared keys, so distribute manually to
@@ -126,7 +141,7 @@ async function run(req: SmartEraseRequest): Promise<ArrayBuffer> {
     scope.postMessage({ ...response, runId: req.runId } satisfies SmartEraseResponse, transfer ? [transfer] : undefined)
   }
   report({ type: 'stage', stage: 'session' })
-  const inferenceSession = await getSession(req.runId)
+  let inferenceSession = await getSession(req.runId)
   const ort = await loadOrt()
 
   report({ type: 'stage', stage: 'inference' })
@@ -141,7 +156,18 @@ async function run(req: SmartEraseRequest): Promise<ArrayBuffer> {
     [inferenceSession.inputNames[1]]: maskTensor,
   }
 
-  const results = await inferenceSession.run(feeds)
+  let results: Record<string, { data: Uint8Array }>
+  try {
+    results = await inferenceSession.run(feeds)
+  } catch (err) {
+    if (!usedWebgpu) throw err
+    // WebGPU sessions can create cleanly yet fail at run time (device loss,
+    // driver quirks, per-tile OOM). Rebuild once on WASM and retry; if the
+    // rebuild itself or the retry fails, surface that error.
+    report({ type: 'stage', stage: 'session' })
+    inferenceSession = await rebuildSessionOnWasm(req.runId)
+    results = await inferenceSession.run(feeds)
+  }
   const output = results[inferenceSession.outputNames[0]]
   // Single fused pass: convert CHW -> RGBA and blend through the feathered
   // alpha in one allocation.
