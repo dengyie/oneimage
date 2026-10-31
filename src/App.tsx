@@ -62,7 +62,7 @@ import {
   type LocalHistoryItem,
 } from './infrastructure/history-storage'
 import type { MarkupMode } from './components/editor/SubToolbars/MarkupSubToolbar'
-import type { MosaicType } from './components/editor/SubToolbars/MosaicSubToolbar'
+import type { MosaicType, MosaicShape } from './components/editor/SubToolbars/MosaicSubToolbar'
 import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
 import { runSmartErase, disposeSmartEraseWorker, SMART_ERASE_MAX_EDGE, type SmartEraseStage } from './infrastructure/inpaint/smart-erase'
 import { drawEraseAiMask } from './application/editor-renderer'
@@ -140,6 +140,10 @@ export function App() {
   const [markupWidth, setMarkupWidth] = useState(6)
   const [mosaicType, setMosaicType] = useState<MosaicType>('pixel')
   const [mosaicBlockSize, setMosaicBlockSize] = useState(16)
+  // Brush is the default shape: WeChat/QQ's mosaic is a freehand brush, and a
+  // box is still one click away in the sub-toolbar.
+  const [mosaicShape, setMosaicShape] = useState<MosaicShape>('brush')
+  const [mosaicBrushSize, setMosaicBrushSize] = useState(48)
   const [textStyle, setTextStyle] = useState<TextBgStyle>('translucent')
   const [textColor, setTextColor] = useState('#ffffff')
   const [textSize, setTextSize] = useState(28)
@@ -1255,6 +1259,8 @@ export function App() {
               markupWidth={markupWidth}
               mosaicType={mosaicType}
               mosaicBlockSize={mosaicBlockSize}
+              mosaicShape={mosaicShape}
+              mosaicBrushSize={mosaicBrushSize}
               textStyle={textStyle}
               textColor={textColor}
               textSize={textSize}
@@ -1288,8 +1294,12 @@ export function App() {
             onMarkupWidthSelect={setMarkupWidth}
             mosaicType={mosaicType}
             mosaicBlockSize={mosaicBlockSize}
+            mosaicShape={mosaicShape}
+            mosaicBrushSize={mosaicBrushSize}
             onMosaicTypeSelect={setMosaicType}
             onMosaicBlockSizeSelect={setMosaicBlockSize}
+            onMosaicShapeSelect={setMosaicShape}
+            onMosaicBrushSizeSelect={setMosaicBrushSize}
             textStyle={textStyle}
             textColor={textColor}
             textSize={textSize}

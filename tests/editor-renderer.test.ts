@@ -488,3 +488,105 @@ describe('smart-erase marquee rendering', () => {
     expect(calls.fill).toBe(0)
   })
 })
+
+describe('brush mosaic rendering', () => {
+  interface CanvasLog { width: number; height: number; ops: string[] }
+
+  const recordFactory = () => {
+    const log: CanvasLog[] = []
+    const factory: CanvasFactory = {
+      create: (width, height) => {
+        const entry: CanvasLog = { width, height, ops: [] }
+        log.push(entry)
+        const push = (value: string) => entry.ops.push(value)
+        const canvas = { width, height }
+        const context = { canvas, imageSmoothingEnabled: true, filter: 'none', fillStyle: '', strokeStyle: '', lineCap: 'butt', lineJoin: 'miter', lineWidth: 0 }
+        let composite = 'source-over'
+        Object.defineProperty(context, 'globalCompositeOperation', {
+          get: () => composite,
+          set: (value: string) => { composite = value; push(`composite:${value}`) },
+        })
+        Object.assign(context, {
+          save: () => push('save'),
+          restore: () => push('restore'),
+          beginPath: () => push('beginPath'),
+          moveTo: (x: number, y: number) => push(`moveTo:${x},${y}`),
+          lineTo: (x: number, y: number) => push(`lineTo:${x},${y}`),
+          arc: (x: number, y: number, r: number) => push(`arc:${x},${y},${r}`),
+          rect: (x: number, y: number) => push(`rect:${x},${y}`),
+          closePath: () => push('closePath'),
+          clip: () => push('clip'),
+          stroke: () => push(`stroke:${context.lineWidth}:${context.lineCap}`),
+          fill: () => push('fill'),
+          clearRect: () => push('clearRect'),
+          drawImage: (...args: unknown[]) => push(`drawImage:${args.slice(1).map(String).join(',')}`),
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          measureText: () => ({ width: 10 }),
+        })
+        return { width, height, getContext: () => context as never, convertToBlob: async () => new Blob() } as never
+      },
+    }
+    return { factory, log }
+  }
+
+  const strokeState = (points: Array<{ x: number; y: number }>) => {
+    const state = createEditorState(100, 100)
+    state.annotations = [
+      { id: 'm1', type: 'mosaic', points, rect: { x: 0, y: 0, width: 100, height: 100 }, color: '#000000', strokeWidth: 20, mosaicType: 'pixel', mosaicBlockSize: 16 },
+    ]
+    return state
+  }
+
+  it('masks the blocky effect down to the brushed path and composites it once', () => {
+    const { factory, log } = recordFactory()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    renderEditor(source, strokeState([{ x: 20, y: 50 }, { x: 80, y: 50 }]), factory, { maxEdge: 100 })
+
+    // main canvas, effect region (block-snapped), downsample tile, stroke mask
+    expect(log[0]).toMatchObject({ width: 100, height: 100 })
+    expect(log[1]).toMatchObject({ width: 96, height: 32 })
+    expect(log[2]).toMatchObject({ width: 6, height: 2 })
+    expect(log[3]).toMatchObject({ width: 96, height: 32 })
+
+    // The effect is clipped by alpha, not by a canvas clip path.
+    expect(log[1].ops).toContain('composite:destination-in')
+    expect(log[1].ops).toContain('composite:source-over')
+    expect(log[0].ops.some((op) => op.startsWith('clip'))).toBe(false)
+
+    // Mask follows the stroke with a round-capped brush of the requested width.
+    const maskOps = log[3].ops
+    expect(maskOps).toContain('moveTo:20,18')
+    expect(maskOps).toContain('lineTo:80,18')
+    expect(maskOps).toContain('stroke:20:round')
+
+    // Exactly one composite back onto the base image, at the region origin.
+    const mainDraws = log[0].ops.filter((op) => op.startsWith('drawImage'))
+    expect(mainDraws).toEqual(['drawImage:0,32'])
+  })
+
+  it('paints a dot when the brush is tapped without moving', () => {
+    const { factory, log } = recordFactory()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    renderEditor(source, strokeState([{ x: 50, y: 50 }]), factory, { maxEdge: 100 })
+
+    const maskOps = log[log.length - 1].ops
+    expect(maskOps.some((op) => op.startsWith('arc'))).toBe(true)
+    expect(maskOps).toContain('fill')
+    expect(maskOps.some((op) => op.startsWith('stroke'))).toBe(false)
+  })
+
+  it('still clips a rectangle for mosaic layers without points', () => {
+    const { factory, log } = recordFactory()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    const state = createEditorState(100, 100)
+    state.annotations = [
+      { id: 'r1', type: 'mosaic', rect: { x: 20, y: 20, width: 40, height: 40 }, color: '#000000', strokeWidth: 1, mosaicType: 'pixel', mosaicBlockSize: 8 },
+    ]
+    renderEditor(source, state, factory, { maxEdge: 100 })
+
+    expect(log[0].ops.some((op) => op.startsWith('clip'))).toBe(true)
+    expect(log.some((entry) => entry.ops.some((op) => op.startsWith('composite:destination-in')))).toBe(false)
+  })
+})
