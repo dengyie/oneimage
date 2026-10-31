@@ -66,6 +66,7 @@ import type { MosaicType, MosaicShape } from './components/editor/SubToolbars/Mo
 import type { WatermarkLayout, WatermarkEraseType } from './components/editor/SubToolbars/WatermarkSubToolbar'
 import { runSmartErase, disposeSmartEraseWorker, SMART_ERASE_MAX_EDGE, type SmartEraseStage } from './infrastructure/inpaint/smart-erase'
 import { drawEraseAiMask } from './application/editor-renderer'
+import { computeFitScale } from './components/image-editor-model'
 import './styles.css'
 
 /** Stable per-document id; also the IndexedDB draft id for local drafts. */
@@ -291,12 +292,7 @@ export function App() {
     setProvenanceResult(null)
     setProvenanceResultDetail(null)
     setProvenanceError(null)
-    const margin = 120
-    const fitScale = Math.min(
-      1.0,
-      Math.min((window.innerWidth - margin) / decoded.width, (window.innerHeight - margin) / decoded.height)
-    )
-    setZoomScale(Math.max(0.1, Number(fitScale.toFixed(2))))
+    setZoomScale(computeFitScale(decoded, { width: window.innerWidth, height: window.innerHeight }))
     setPanOffset({ x: 0, y: 0 })
   }, [])
 
@@ -502,6 +498,11 @@ export function App() {
     // Resetting is a normal step in the tree, so it can be undone like any edit.
     const { width, height } = decodedSource
     commitEdit(() => createEditorState(width, height))
+    // The pixels go back to the original, so the view must follow: otherwise the
+    // user keeps staring at whichever corner they had zoomed into while the
+    // content behind it jumped back to the full frame.
+    setZoomScale(computeFitScale(decodedSource, { width: window.innerWidth, height: window.innerHeight }))
+    setPanOffset({ x: 0, y: 0 })
     showToast('已还原为原始状态', 'info')
   }, [decodedSource, file, commitEdit, showToast])
 
@@ -1229,12 +1230,7 @@ export function App() {
             onZoomOut={() => setZoomScale((s) => Math.max(0.05, s * 0.8))}
             onZoomReset={() => {
               if (Math.abs(zoomScale - 1.0) < 0.1) {
-                const margin = 120
-                const fit = Math.min(
-                  1.0,
-                  Math.min((window.innerWidth - margin) / decodedSource.width, (window.innerHeight - margin) / decodedSource.height)
-                )
-                setZoomScale(fit)
+                setZoomScale(computeFitScale(decodedSource, { width: window.innerWidth, height: window.innerHeight }))
               } else {
                 setZoomScale(1.0)
               }

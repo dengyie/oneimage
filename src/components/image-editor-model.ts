@@ -76,6 +76,31 @@ export interface PanOffset {
   y: number
 }
 
+export const VIEWPORT_FIT_MARGIN = 120
+export const MIN_ZOOM_SCALE = 0.1
+
+/**
+ * The framing a document opens in: fit inside the window minus a margin, never
+ * upscaled past 100%. Reverting a document computes the same numbers, so the
+ * picture lands where the user first saw it instead of keeping whatever zoom
+ * and pan they had scrolled to.
+ */
+export function computeFitScale(
+  document: { width: number; height: number },
+  viewport: { width: number; height: number },
+  margin = VIEWPORT_FIT_MARGIN
+): number {
+  const scale = Math.min(
+    1.0,
+    (viewport.width - margin) / document.width,
+    (viewport.height - margin) / document.height
+  )
+  // A zero-sized document or window would otherwise poison the transform with
+  // Infinity/NaN, which leaves the canvas unmountable.
+  if (!Number.isFinite(scale)) return 1.0
+  return Math.max(MIN_ZOOM_SCALE, Number(scale.toFixed(2)))
+}
+
 // Cursor-anchored wheel zoom for the spatial viewport transform
 // `translate(pan) scale(s)` with transform-origin at the element center (the
 // element is flex-centered in the container). The element point under the
