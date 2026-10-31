@@ -2,7 +2,7 @@ import React from 'react'
 import { UiIcon, type UiIconName } from '../ui/UiIcon'
 import { CropSubToolbar } from './SubToolbars/CropSubToolbar'
 import { MarkupSubToolbar, type MarkupMode } from './SubToolbars/MarkupSubToolbar'
-import { MosaicSubToolbar, type MosaicType } from './SubToolbars/MosaicSubToolbar'
+import { MosaicSubToolbar, type MosaicType, type MosaicShape } from './SubToolbars/MosaicSubToolbar'
 import { TextSubToolbar } from './SubToolbars/TextSubToolbar'
 import { AdjustSubToolbar } from './SubToolbars/AdjustSubToolbar'
 import { CompressSubToolbar } from './SubToolbars/CompressSubToolbar'
@@ -36,8 +36,12 @@ interface BottomDockProps {
   // Mosaic props
   mosaicType: MosaicType
   mosaicBlockSize: number
+  mosaicShape: MosaicShape
+  mosaicBrushSize: number
   onMosaicTypeSelect: (type: MosaicType) => void
   onMosaicBlockSizeSelect: (size: number) => void
+  onMosaicShapeSelect: (shape: MosaicShape) => void
+  onMosaicBrushSizeSelect: (size: number) => void
 
   // Text props
   textStyle: TextBgStyle
@@ -106,8 +110,12 @@ export const BottomDock: React.FC<BottomDockProps> = ({
   onMarkupWidthSelect,
   mosaicType,
   mosaicBlockSize,
+  mosaicShape,
+  mosaicBrushSize,
   onMosaicTypeSelect,
   onMosaicBlockSizeSelect,
+  onMosaicShapeSelect,
+  onMosaicBrushSizeSelect,
   textStyle,
   textColor,
   textSize,
@@ -168,8 +176,12 @@ export const BottomDock: React.FC<BottomDockProps> = ({
           <MosaicSubToolbar
             currentType={mosaicType}
             currentBlockSize={mosaicBlockSize}
+            currentShape={mosaicShape}
+            currentBrushSize={mosaicBrushSize}
             onTypeSelect={onMosaicTypeSelect}
             onBlockSizeSelect={onMosaicBlockSizeSelect}
+            onShapeSelect={onMosaicShapeSelect}
+            onBrushSizeSelect={onMosaicBrushSizeSelect}
           />
         )}
         {activeTool === 'text' && (

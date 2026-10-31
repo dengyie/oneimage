@@ -135,15 +135,25 @@ function drawLocalAdjustment(context: CanvasRenderingContext2D | OffscreenCanvas
   throwIfAborted(signal)
 }
 
-function applyMosaic(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, factory: CanvasFactory, local: LocalAdjustment, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
-  const rect = toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource)
-  const x = Math.max(0, Math.floor(rect.x))
-  const y = Math.max(0, Math.floor(rect.y))
-  const width = Math.min(outputWidth - x, Math.ceil(rect.x + rect.width) - x)
-  const height = Math.min(outputHeight - y, Math.ceil(rect.y + rect.height) - y)
-  if (width < 1 || height < 1) return
-  const requestedBlockSize = Number.isFinite(local.mosaicBlockSize) ? local.mosaicBlockSize! : 12
-  const blockSize = Math.max(2, Math.min(128, Math.round(requestedBlockSize * scale)))
+const DEFAULT_MOSAIC_BLOCK_SIZE = 12
+const MOSAIC_BLUR_RADIUS_PX = 12
+
+function resolveMosaicBlockSize(requested: number | undefined, scale: number): number {
+  const requestedValue = Number.isFinite(requested) ? requested! : DEFAULT_MOSAIC_BLOCK_SIZE
+  return Math.max(2, Math.min(128, Math.round(requestedValue * scale)))
+}
+
+// Replace [x, y, width, height] of the target canvas with a blocky downsample
+// of itself. Callers own the clipping, so this only paints the effect.
+function paintPixelRegion(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  factory: CanvasFactory,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  blockSize: number,
+): void {
   const mosaicWidth = Math.max(1, Math.ceil(width / blockSize))
   const mosaicHeight = Math.max(1, Math.ceil(height / blockSize))
   const mosaic = factory.create(mosaicWidth, mosaicHeight)
@@ -151,12 +161,41 @@ function applyMosaic(context: CanvasRenderingContext2D | OffscreenCanvasRenderin
   if (!mosaicContext) throw new Error('mosaic canvas unavailable')
   mosaicContext.imageSmoothingEnabled = true
   mosaicContext.drawImage(context.canvas, x, y, width, height, 0, 0, mosaicWidth, mosaicHeight)
+  context.imageSmoothingEnabled = false
+  context.drawImage(mosaic as unknown as CanvasImageSource, x, y, width, height)
+}
+
+// Same contract as paintPixelRegion, but with a gaussian blur instead of blocks.
+function paintBlurRegion(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  factory: CanvasFactory,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  blurRadius: number,
+): void {
+  const blurLayer = factory.create(width, height)
+  const blurCtx = blurLayer.getContext('2d')
+  if (!blurCtx) return
+  blurCtx.drawImage?.(context.canvas as never, x, y, width, height, 0, 0, width, height)
+  context.filter = `blur(${blurRadius}px)`
+  context.drawImage?.(blurLayer as never, 0, 0, width, height, x, y, width, height)
+}
+
+function applyMosaic(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, factory: CanvasFactory, local: LocalAdjustment, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
+  const rect = toOutputRect(local.rect, state, outputWidth, outputHeight, scale, showFullSource)
+  const x = Math.max(0, Math.floor(rect.x))
+  const y = Math.max(0, Math.floor(rect.y))
+  const width = Math.min(outputWidth - x, Math.ceil(rect.x + rect.width) - x)
+  const height = Math.min(outputHeight - y, Math.ceil(rect.y + rect.height) - y)
+  if (width < 1 || height < 1) return
+  const blockSize = resolveMosaicBlockSize(local.mosaicBlockSize, scale)
   context.save()
   context.beginPath()
   traceTransformedRect(context, local.rect, state, outputWidth, outputHeight, scale, showFullSource)
   context.clip()
-  context.imageSmoothingEnabled = false
-  context.drawImage(mosaic as unknown as CanvasImageSource, x, y, width, height)
+  paintPixelRegion(context, factory, x, y, width, height, blockSize)
   context.restore()
 }
 
@@ -169,7 +208,7 @@ function applyBlurRegion(
   outputHeight: number,
   scale: number,
   showFullSource: boolean,
-  blurRadiusPx: number = 12
+  blurRadiusPx: number = MOSAIC_BLUR_RADIUS_PX
 ): void {
   const outRect = toOutputRect(rect, state, outputWidth, outputHeight, scale, showFullSource)
   const blurRadius = Math.max(2, Math.round(blurRadiusPx * scale))
@@ -180,18 +219,114 @@ function applyBlurRegion(
   const height = Math.min(outputHeight - y, Math.ceil(outRect.y + outRect.height + pad) - y)
   if (width < 1 || height < 1) return
 
-  const blurLayer = factory.create(width, height)
-  const blurCtx = blurLayer.getContext('2d')
-  if (!blurCtx) return
-
-  blurCtx.drawImage?.(context.canvas as never, x, y, width, height, 0, 0, width, height)
   context.save?.()
   context.beginPath?.()
   traceTransformedRect(context, rect, state, outputWidth, outputHeight, scale, showFullSource)
   context.clip?.()
-  context.filter = `blur(${blurRadius}px)`
-  context.drawImage?.(blurLayer as never, 0, 0, width, height, x, y, width, height)
+  paintBlurRegion(context, factory, x, y, width, height, blurRadius)
   context.restore?.()
+}
+
+// Brush mosaic: the covered area is a polyline stroke, and a canvas clip can
+// only follow a filled path, not a stroked one. The effect is therefore built
+// on its own canvas and masked with a stroke-shaped alpha mask
+// (`destination-in`) before being composited back over the base image.
+function applyStrokeMosaic(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  factory: CanvasFactory,
+  layer: AnnotationLayer,
+  state: EditorState,
+  outputWidth: number,
+  outputHeight: number,
+  scale: number,
+  showFullSource: boolean,
+): void {
+  const points = layer.points
+  if (!points || points.length === 0) return
+  const lineWidth = Math.max(2, (layer.strokeWidth || 24) * scale)
+  const transformed = points.map((point) =>
+    transformPoint(point.x, point.y, state, outputWidth, outputHeight, scale, showFullSource)
+  )
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const point of transformed) {
+    if (point.x < minX) minX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.x > maxX) maxX = point.x
+    if (point.y > maxY) maxY = point.y
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return
+
+  const isBlur = layer.mosaicType === 'blur'
+  const blockSize = resolveMosaicBlockSize(layer.mosaicBlockSize ?? 16, scale)
+  const blurRadius = Math.max(2, Math.round(MOSAIC_BLUR_RADIUS_PX * scale))
+  const half = lineWidth / 2 + 1
+  const pad = isBlur ? blurRadius * 2 : 0
+
+  let left = Math.floor(minX - half - pad)
+  let top = Math.floor(minY - half - pad)
+  let right = Math.ceil(maxX + half + pad)
+  let bottom = Math.ceil(maxY + half + pad)
+  if (!isBlur) {
+    // Snap to a global block grid: two strokes that meet then share the same
+    // block phase, so the mosaic shows no seam at the join.
+    left = Math.floor(left / blockSize) * blockSize
+    top = Math.floor(top / blockSize) * blockSize
+    right = Math.ceil(right / blockSize) * blockSize
+    bottom = Math.ceil(bottom / blockSize) * blockSize
+  }
+
+  const x = Math.max(0, left)
+  const y = Math.max(0, top)
+  const width = Math.min(outputWidth - x, right - x)
+  const height = Math.min(outputHeight - y, bottom - y)
+  if (width < 1 || height < 1) return
+
+  const effect = factory.create(width, height)
+  const effectContext = effect.getContext('2d')
+  if (!effectContext) return
+  if (isBlur) {
+    effectContext.filter = `blur(${blurRadius}px)`
+    effectContext.drawImage(context.canvas as never, x, y, width, height, 0, 0, width, height)
+    effectContext.filter = 'none'
+  } else {
+    const mosaicWidth = Math.max(1, Math.ceil(width / blockSize))
+    const mosaicHeight = Math.max(1, Math.ceil(height / blockSize))
+    const mosaic = factory.create(mosaicWidth, mosaicHeight)
+    const mosaicContext = mosaic.getContext('2d')
+    if (!mosaicContext) return
+    mosaicContext.imageSmoothingEnabled = true
+    mosaicContext.drawImage(context.canvas as never, x, y, width, height, 0, 0, mosaicWidth, mosaicHeight)
+    effectContext.imageSmoothingEnabled = false
+    effectContext.drawImage(mosaic as unknown as CanvasImageSource, 0, 0, mosaicWidth, mosaicHeight, 0, 0, width, height)
+  }
+
+  const mask = factory.create(width, height)
+  const maskContext = mask.getContext('2d')
+  if (!maskContext) return
+  const local = transformed.map((point) => ({ x: point.x - x, y: point.y - y }))
+  maskContext.fillStyle = '#ffffff'
+  maskContext.strokeStyle = '#ffffff'
+  maskContext.lineCap = 'round'
+  maskContext.lineJoin = 'round'
+  maskContext.lineWidth = lineWidth
+  maskContext.beginPath?.()
+  if (local.length === 1) {
+    // A tap with the brush must still obscure something.
+    maskContext.arc?.(local[0].x, local[0].y, lineWidth / 2, 0, Math.PI * 2)
+    maskContext.fill?.()
+  } else {
+    maskContext.moveTo?.(local[0].x, local[0].y)
+    for (let index = 1; index < local.length; index++) maskContext.lineTo?.(local[index].x, local[index].y)
+    maskContext.stroke?.()
+  }
+  effectContext.globalCompositeOperation = 'destination-in'
+  effectContext.drawImage(mask as unknown as CanvasImageSource, 0, 0)
+  effectContext.globalCompositeOperation = 'source-over'
+
+  context.drawImage(effect as unknown as CanvasImageSource, x, y)
 }
 
 function traceTransformedRect(context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, rect: Rect, state: EditorState, outputWidth: number, outputHeight: number, scale: number, showFullSource: boolean): void {
@@ -427,9 +562,13 @@ function drawAnnotations(
         // never reaches saved output or provenance snapshots.
         drawEraseAiPreview(context, layer, state, outputWidth, outputHeight, scale, showFullSource)
       } else if (layer.type === 'mosaic') {
+        if (layer.points && layer.points.length > 0) {
+          applyStrokeMosaic(context, factory, layer, state, outputWidth, outputHeight, scale, showFullSource)
+          continue
+        }
         if (!layer.rect) continue
         if (layer.mosaicType === 'blur') {
-          applyBlurRegion(context, factory, layer.rect, state, outputWidth, outputHeight, scale, showFullSource, 12)
+          applyBlurRegion(context, factory, layer.rect, state, outputWidth, outputHeight, scale, showFullSource, MOSAIC_BLUR_RADIUS_PX)
         } else {
           const dummyLocal: LocalAdjustment = {
             id: layer.id,

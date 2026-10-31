@@ -6,7 +6,7 @@ import { createBrowserCanvasFactory } from '../../infrastructure/editor-canvas'
 import { mapPointerToSource, mapSourceRectToViewport, createCropGesture, updateCropGesture, computeCursorAnchoredPan, type CropHandle, type CropGesture } from '../image-editor-model'
 import type { ActiveTool } from './BottomDock'
 import type { MarkupMode } from './SubToolbars/MarkupSubToolbar'
-import type { MosaicType } from './SubToolbars/MosaicSubToolbar'
+import type { MosaicType, MosaicShape } from './SubToolbars/MosaicSubToolbar'
 import type { TextBgStyle } from '../../domain/editor-state'
 
 interface CanvasViewportProps {
@@ -18,6 +18,10 @@ interface CanvasViewportProps {
   markupWidth: number
   mosaicType: MosaicType
   mosaicBlockSize: number
+  /** Brush strokes (WeChat/QQ style) vs a dragged box. */
+  mosaicShape: MosaicShape
+  /** Brush diameter in source pixels; ignored while mosaicShape is 'rect'. */
+  mosaicBrushSize: number
   textStyle: TextBgStyle
   textColor: string
   textSize: number
@@ -48,6 +52,8 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   markupWidth,
   mosaicType,
   mosaicBlockSize,
+  mosaicShape,
+  mosaicBrushSize,
   textStyle,
   textColor,
   textSize,
@@ -66,7 +72,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   const overlaySvgRef = useRef<SVGSVGElement>(null)
 
   interface DrawingStroke {
-    mode: MarkupMode | 'mosaic'
+    mode: MarkupMode | 'mosaic' | 'mosaic-brush'
     points: Array<{ x: number; y: number }>
     canvasPoints: Array<{ x: number; y: number }>
     rect?: Rect
@@ -267,7 +273,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       setCurrentStroke(stroke)
     } else if (activeTool === 'mosaic') {
       const stroke: DrawingStroke = {
-        mode: 'mosaic' as const,
+        mode: mosaicShape === 'brush' ? 'mosaic-brush' : 'mosaic',
         points: [sourcePt],
         canvasPoints: [localPt],
         rect: { x: sourcePt.x, y: sourcePt.y, width: 0, height: 0 },
@@ -322,7 +328,8 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
       const sourcePt = getPointerSourceCoord(e.clientX, e.clientY)
       const localPt = getCanvasLocalCoord(e.clientX, e.clientY)
 
-      if (currentStrokeRef.current.mode === 'brush' || currentStrokeRef.current.mode === 'highlighter') {
+      const mode = currentStrokeRef.current.mode
+      if (mode === 'brush' || mode === 'highlighter' || mode === 'mosaic-brush') {
         const lastPoint = currentStrokeRef.current.points[currentStrokeRef.current.points.length - 1]
         // Sub-pixel source moves cannot alter the rendered stroke; skipping
         // them avoids both state bloat and a re-render per pointer event.
@@ -438,6 +445,39 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
             mosaicBlockSize,
           }
         }
+      } else if (stroke.mode === 'mosaic-brush') {
+        if (stroke.points.length > 0) {
+          const half = mosaicBrushSize / 2
+          let minX = Number.POSITIVE_INFINITY
+          let minY = Number.POSITIVE_INFINITY
+          let maxX = Number.NEGATIVE_INFINITY
+          let maxY = Number.NEGATIVE_INFINITY
+          for (const point of stroke.points) {
+            if (point.x < minX) minX = point.x
+            if (point.y < minY) minY = point.y
+            if (point.x > maxX) maxX = point.x
+            if (point.y > maxY) maxY = point.y
+          }
+          newLayer = {
+            id,
+            type: 'mosaic',
+            // `points` marks this as a brush mosaic; the renderer strokes it
+            // through a mask instead of clipping a rectangle.
+            points: stroke.points,
+            // Bounding box of the stroke, kept for consumers that only know
+            // about rect-based mosaic layers.
+            rect: {
+              x: minX - half,
+              y: minY - half,
+              width: maxX - minX + half * 2,
+              height: maxY - minY + half * 2,
+            },
+            color: '#000000',
+            strokeWidth: mosaicBrushSize,
+            mosaicType,
+            mosaicBlockSize,
+          }
+        }
       }
 
       if (newLayer) {
@@ -537,6 +577,15 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   }, [source, state, activeTool, isComparingOriginal])
   const canvasWidth = renderPlan.width
   const canvasHeight = renderPlan.height
+  // Canvas pixels per source pixel, for draft overlays drawn in canvas space
+  // that must match the brush width in source pixels.
+  const overlayScale = useMemo(() => {
+    if (!source || canvasWidth <= 0) return 1
+    const baseWidth = activeTool === 'crop' ? source.width : state.crop.width
+    const baseHeight = activeTool === 'crop' ? source.height : state.crop.height
+    const rotated = rotatedDimensions(baseWidth, baseHeight, state.rotation)
+    return rotated.width > 0 ? canvasWidth / rotated.width : 1
+  }, [source, activeTool, state.crop.width, state.crop.height, state.rotation, canvasWidth])
   const cropScale = (source && activeTool === 'crop' && rotatedDim && canvasWidth > 0)
     ? canvasWidth / rotatedDim.width
     : 1
@@ -639,6 +688,46 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
                 strokeWidth={markupWidth}
               />
             )}
+            {currentStroke.mode === 'mosaic-brush' && (() => {
+              const brushWidth = Math.max(2, mosaicBrushSize * overlayScale)
+              const pts = currentStroke.canvasPoints || currentStroke.points
+              const polylinePoints = pts.map((p) => `${p.x},${p.y}`).join(' ')
+              return (
+                <>
+                  {pts.length === 1 ? (
+                    <circle
+                      cx={pts[0].x}
+                      cy={pts[0].y}
+                      r={brushWidth / 2}
+                      fill="rgba(34, 197, 94, 0.18)"
+                      stroke="#22c55e"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                    />
+                  ) : (
+                    <>
+                      <polyline
+                        points={polylinePoints}
+                        fill="none"
+                        stroke="rgba(34, 197, 94, 0.18)"
+                        strokeWidth={brushWidth}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <polyline
+                        points={polylinePoints}
+                        fill="none"
+                        stroke="#22c55e"
+                        strokeWidth={1.5}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeDasharray="4 4"
+                      />
+                    </>
+                  )}
+                </>
+              )
+            })()}
             {currentStroke.mode === 'mosaic' && (currentStroke.canvasRect || currentStroke.rect) && (
               <rect
                 x={(currentStroke.canvasRect || currentStroke.rect)!.x}
