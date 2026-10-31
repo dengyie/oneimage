@@ -834,6 +834,13 @@ export function App() {
 
       const baseName = file.name.replace(/\.[^/.]+$/, '')
       const resultFile = new File([blob], `${baseName}_smart-erased.png`, { type: 'image/png' })
+      // The pending marquees have served their purpose. Clear them from the
+      // source document BEFORE switching, so undoing back to it does not
+      // resurrect a stale "pending" frame over an already-erased region.
+      commitEdit((prev) => ({
+        ...prev,
+        annotations: (prev.annotations ?? []).filter((layer) => layer.type !== 'erase-ai'),
+      }))
       const opened = await documentSwitcher.openDocument(resultFile, (decoded) => ({
         docId: createDraftId(),
         file: resultFile,
@@ -850,7 +857,7 @@ export function App() {
       setIsSmartErasing(false)
       setSmartEraseStage(null)
     }
-  }, [decodedSource, file, factory, documentSwitcher, showToast])
+  }, [decodedSource, file, factory, documentSwitcher, showToast, commitEdit])
 
   const handleCheckProvenanceTarget = useCallback(
     async (target: 'current' | 'original') => {

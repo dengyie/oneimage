@@ -343,6 +343,90 @@ describe('render plan', () => {
   })
 })
 
+describe('blackout erase region rendering', () => {
+  const recordRects = () => {
+    const calls: Array<{ kind: 'stroke' | 'fill'; style: string; lineWidth: number; alpha: number }> = []
+    const factory: CanvasFactory = {
+      create: (width, height) => {
+        const canvas = { width, height }
+        const context = {
+          canvas,
+          globalAlpha: 1,
+          fillStyle: '',
+          strokeStyle: '',
+          lineWidth: 0,
+          save: () => {},
+          restore: () => {},
+          beginPath: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          closePath: () => {},
+          clearRect: () => {},
+          drawImage: () => {},
+          translate: () => {},
+          rotate: () => {},
+          scale: () => {},
+          measureText: () => ({ width: 10 }),
+          stroke: () => {
+            calls.push({ kind: 'stroke', style: context.strokeStyle, lineWidth: context.lineWidth, alpha: context.globalAlpha })
+          },
+          fill: () => {
+            calls.push({ kind: 'fill', style: context.fillStyle, lineWidth: context.lineWidth, alpha: context.globalAlpha })
+          },
+        }
+        return { width, height, getContext: () => context as never, convertToBlob: async () => new Blob() } as never
+      },
+    }
+    return { factory, calls }
+  }
+
+  const blackoutState = () => {
+    const state = createEditorState(100, 100)
+    state.annotations = [
+      { id: 'b1', type: 'rect', rect: { x: 10, y: 10, width: 40, height: 40 }, color: '#000000', strokeWidth: 0, opacity: 1 },
+    ]
+    return state
+  }
+
+  it('fills a strokeWidth-0 rect solid instead of outlining it', () => {
+    const { factory, calls } = recordRects()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    renderEditor(source, blackoutState(), factory, { maxEdge: 100 })
+
+    // A hollow outline around the blackout region was the production bug: it
+    // leaked into exports and poisoned the smart-erase mask context.
+    expect(calls.some((call) => call.kind === 'stroke')).toBe(false)
+    const fills = calls.filter((call) => call.kind === 'fill')
+    expect(fills).toHaveLength(1)
+    expect(fills[0].style).toBe('#000000')
+    expect(fills[0].alpha).toBe(1)
+  })
+
+  it('still outlines a normal rect annotation with a stroke width', () => {
+    const { factory, calls } = recordRects()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    const state = createEditorState(100, 100)
+    state.annotations = [
+      { id: 'r1', type: 'rect', rect: { x: 10, y: 10, width: 40, height: 40 }, color: '#ef4444', strokeWidth: 4 },
+    ]
+    renderEditor(source, state, factory, { maxEdge: 100 })
+
+    const strokes = calls.filter((call) => call.kind === 'stroke')
+    expect(strokes).toHaveLength(1)
+    expect(strokes[0].style).toBe('#ef4444')
+    expect(strokes[0].lineWidth).toBe(4)
+  })
+
+  it('bakes the solid blackout into exports', async () => {
+    const { factory, calls } = recordRects()
+    const source: DecodedSource = { width: 100, height: 100, draw: () => {}, close: () => {} }
+    await exportEditor(source, blackoutState(), factory, 'image/png', 1)
+
+    expect(calls.filter((call) => call.kind === 'fill')).toHaveLength(1)
+    expect(calls.some((call) => call.kind === 'stroke')).toBe(false)
+  })
+})
+
 describe('smart-erase marquee rendering', () => {
   const recordingFactory = () => {
     const calls = { setLineDash: 0, stroke: 0, fill: 0 }

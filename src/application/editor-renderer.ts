@@ -396,11 +396,22 @@ function drawAnnotations(
         context.fill?.()
       } else if (layer.type === 'rect') {
         if (!layer.rect) continue
-        context.strokeStyle = layer.color || '#ef4444'
-        context.lineWidth = Math.max(1, (layer.strokeWidth || 4) * scale)
         context.beginPath?.()
         traceTransformedRect(context, layer.rect, state, outputWidth, outputHeight, scale, showFullSource)
-        context.stroke?.()
+        if (layer.strokeWidth === 0) {
+          // Blackout erase regions are solid covers, not outlines: strokeWidth
+          // 0 means "fill only". Rendering them as a stroke (the old `|| 4`
+          // fallback) left a hollow black frame that leaked into exports and,
+          // worse, into the smart-erase snapshot where the ring around the
+          // mask hole poisoned MI-GAN's context and blackened the result.
+          context.globalAlpha = layer.opacity ?? 1
+          context.fillStyle = layer.color || '#000000'
+          context.fill?.()
+        } else {
+          context.strokeStyle = layer.color || '#ef4444'
+          context.lineWidth = Math.max(1, layer.strokeWidth * scale)
+          context.stroke?.()
+        }
       } else if (layer.type === 'ellipse') {
         if (!layer.rect) continue
         context.strokeStyle = layer.color || '#ef4444'
