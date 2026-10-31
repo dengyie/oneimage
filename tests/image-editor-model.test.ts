@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeCursorAnchoredPan, createCropGesture, mapSourceRectToViewport, mapPointerToSource, updateCropGesture } from '../src/components/image-editor-model'
+import { computeCursorAnchoredPan, computeFitScale, createCropGesture, mapSourceRectToViewport, mapPointerToSource, updateCropGesture } from '../src/components/image-editor-model'
 
 describe('image editor interaction model', () => {
   it('converts a pointer drag into a bounded crop move', () => {
@@ -109,5 +109,24 @@ describe('image editor interaction model', () => {
     const pan = { x: 12, y: -8 }
     expect(computeCursorAnchoredPan(100, 100, 960, 540, pan, 0, 2)).toEqual(pan)
     expect(computeCursorAnchoredPan(100, 100, 960, 540, pan, 1, Number.NaN)).toEqual(pan)
+  })
+})
+
+describe('fit framing used when a document opens or is reverted', () => {
+  it('fits a large document inside the viewport with the standard margin', () => {
+    // 2000x1000 in a 1400x900 window, 120px margin: width wins -> 1280/2000.
+    expect(computeFitScale({ width: 2000, height: 1000 }, { width: 1400, height: 900 })).toBe(0.64)
+  })
+
+  it('never upscales a small document past 100%', () => {
+    expect(computeFitScale({ width: 120, height: 80 }, { width: 1600, height: 1000 })).toBe(1)
+  })
+
+  it('clamps to the minimum zoom when the margin swallows the window', () => {
+    expect(computeFitScale({ width: 4000, height: 4000 }, { width: 640, height: 480 })).toBe(0.1)
+  })
+
+  it('falls back to 1 for a degenerate document size instead of returning NaN', () => {
+    expect(computeFitScale({ width: 0, height: 0 }, { width: 1200, height: 800 })).toBe(1)
   })
 })
