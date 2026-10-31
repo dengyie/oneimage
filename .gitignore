@@ -14,3 +14,6 @@ public/models/ort/
 # Local dev copies of the smart-erase model assets (fetched, not committed)
 public/models/*.onnx
 public/models/ort/
+
+# Local SQLite runtime state created by the dev server
+data/
